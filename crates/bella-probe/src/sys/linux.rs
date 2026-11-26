@@ -168,14 +168,14 @@ fn disks() -> Vec<DiskInfo> {
         if !seen.insert(mount.device.clone()) {
             continue;
         }
-        if let Some((total, _)) = disk_usage(Path::new(&mount.mount)) {
-            if total > 0 {
-                disks.push(DiskInfo {
-                    mount: mount.mount,
-                    total_bytes: total,
-                    filesystem: mount.filesystem,
-                });
-            }
+        if let Some((total, _)) = disk_usage(Path::new(&mount.mount))
+            && total > 0
+        {
+            disks.push(DiskInfo {
+                mount: mount.mount,
+                total_bytes: total,
+                filesystem: mount.filesystem,
+            });
         }
     }
     disks.sort_by(|a, b| a.mount.cmp(&b.mount));

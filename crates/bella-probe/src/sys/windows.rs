@@ -415,10 +415,10 @@ fn gpus() -> Vec<String> {
     let mut gpus: Vec<String> = Vec::new();
     for index in 0..32 {
         let key = format!("{DISPLAY_CLASS}\\{index:04}");
-        if let Some(name) = reg_string(&key, "DriverDesc") {
-            if !gpus.contains(&name) {
-                gpus.push(name);
-            }
+        if let Some(name) = reg_string(&key, "DriverDesc")
+            && !gpus.contains(&name)
+        {
+            gpus.push(name);
         }
     }
     gpus

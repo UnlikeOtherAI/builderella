@@ -35,13 +35,13 @@ pub(crate) mod os;
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 compile_error!("bella-probe supports Linux, macOS and Windows only");
 
-/// Where a telemetry value came from.
+/// Where a telemetry value came from. Not every OS produces every variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum Origin {
     /// A counter the OS reports directly.
     Measured,
     /// Derived by a rule of this crate from other counters.
-    #[cfg_attr(not(windows), allow(dead_code))]
     Estimated,
     /// Could not be read.
     Unavailable,
