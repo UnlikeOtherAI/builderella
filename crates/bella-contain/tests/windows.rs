@@ -550,10 +550,12 @@ fn process_limit_blocks_extra_roots() {
     }
     // A root that got in but could not get its console host fails on its own.
     sleep(Duration::from_secs(1));
-    let running = started
-        .iter_mut()
-        .filter(|spawned| spawned.child.try_wait().unwrap().is_none())
-        .count();
+    let mut running = 0;
+    for spawned in &mut started {
+        if spawned.child.try_wait().unwrap().is_none() {
+            running += 1;
+        }
+    }
     let members = alive(&scope);
     println!("limit {LIMIT}: {running} roots running, {refused} refused, {members} members");
     assert!(members <= LIMIT);
