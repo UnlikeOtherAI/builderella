@@ -155,9 +155,9 @@ use windows_sys::Win32::System::Threading::{
     EXTENDED_STARTUPINFO_PRESENT, GetActiveProcessorCount, GetCurrentProcess, GetExitCodeProcess,
     INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
     NORMAL_PRIORITY_CLASS, OpenProcess, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION,
-    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
-    ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
-    UpdateProcThreadAttribute, WaitForSingleObject,
+    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+    QueryFullProcessImageNameW, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
+    TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
 /// Exit code of every process ended by [`Scope::kill`].
@@ -512,8 +512,9 @@ fn process_ids(job: HANDLE) -> Result<Vec<u32>, ContainError> {
 /// `job`. While the handle is open the id cannot be reused, so it is safe to
 /// act on `pid` for as long as the returned handle lives.
 fn open_member(job: HANDLE, pid: u32) -> Option<OwnedHandle> {
+    let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE;
     // SAFETY: no pointers are involved; failure is reported as null.
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let handle = unsafe { OpenProcess(access, 0, pid) };
     if handle.is_null() {
         return None;
     }
