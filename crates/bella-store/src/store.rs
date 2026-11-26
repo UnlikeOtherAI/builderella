@@ -29,8 +29,10 @@ pub struct StoreOptions {
     /// Largest uncompressed object `put` and `put_compressed` accept.
     /// Defaults to [`defaults::MAX_OBJECT_BYTES`].
     pub max_object_bytes: u64,
-    /// Clock used to stamp published objects and to measure the age of
-    /// objects and temporary files during garbage collection.
+    /// Clock used to stamp objects when they are published or re-put, and
+    /// to measure their age during garbage collection. Temporary files are
+    /// timestamped by the operating system as they are written, so their
+    /// age is always measured against the system clock.
     pub clock: Arc<dyn Clock>,
 }
 
@@ -316,9 +318,10 @@ impl FsStore {
     /// published or refreshed the object, which is just before it returned.
     /// That is the time the caller has to make `is_live` return true.
     ///
-    /// Temporary files (`tmp/*.tmp`) not written to for `grace` are deleted.
-    /// `grace` must be longer than the longest stall of an upload in
-    /// progress, or that upload fails when it tries to publish.
+    /// Temporary files (`tmp/*.tmp`) not written to for `grace`, by the
+    /// system clock, are deleted. `grace` must be longer than the longest
+    /// stall of an upload in progress, or that upload fails when it tries
+    /// to publish.
     ///
     /// `is_live` may be called twice per object and must not call back into
     /// this store's `put`, `put_compressed` or `gc`.
@@ -382,7 +385,7 @@ impl FsStore {
         let Some(meta) = stat(path)? else {
             return Ok(Collected::Gone);
         };
-        if !self.is_older_than(&meta, grace)? {
+        if !self.object_is_older_than(&meta, grace)? {
             return Ok(Collected::InGrace);
         }
 
@@ -392,7 +395,7 @@ impl FsStore {
         let Some(meta) = stat(path)? else {
             return Ok(Collected::Gone);
         };
-        if !self.is_older_than(&meta, grace)? {
+        if !self.object_is_older_than(&meta, grace)? {
             return Ok(Collected::InGrace);
         }
         if is_live(digest) {
@@ -419,7 +422,9 @@ impl FsStore {
         if !meta.is_file() {
             return Ok(Collected::Gone);
         }
-        if !self.is_older_than(&meta, grace)? {
+        // The operating system stamped this file, so its age is measured
+        // on the operating system's clock.
+        if !is_older_than(&meta, SystemTime::now(), grace)? {
             return Ok(Collected::InGrace);
         }
         match fs::remove_file(path) {
@@ -429,16 +434,10 @@ impl FsStore {
         }
     }
 
-    /// Whether the file was last modified at least `grace` ago by this
-    /// store's clock. A modification time in the future counts as age zero.
-    fn is_older_than(&self, meta: &fs::Metadata, grace: Duration) -> io::Result<bool> {
-        let modified = meta
-            .modified()?
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        let now = u128::from(self.clock.now().0);
-        Ok(now.saturating_sub(modified) >= grace.as_millis())
+    /// Whether an object was published or refreshed at least `grace` ago
+    /// by this store's clock, which is the clock that stamped it.
+    fn object_is_older_than(&self, meta: &fs::Metadata, grace: Duration) -> io::Result<bool> {
+        is_older_than(meta, self.now(), grace)
     }
 
     fn now(&self) -> SystemTime {
@@ -887,6 +886,13 @@ fn stat(path: &Path) -> io::Result<Option<fs::Metadata>> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
     }
+}
+
+/// Whether the file was last modified at least `grace` before `now`. A
+/// modification time after `now` counts as age zero.
+fn is_older_than(meta: &fs::Metadata, now: SystemTime, grace: Duration) -> io::Result<bool> {
+    let age = now.duration_since(meta.modified()?).unwrap_or_default();
+    Ok(age >= grace)
 }
 
 fn header_matches(path: &Path, len: u64) -> bool {

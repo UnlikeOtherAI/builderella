@@ -11,7 +11,7 @@ use std::io::{self, Cursor, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Barrier};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 const HOUR: Duration = Duration::from_secs(60 * 60);
 
@@ -558,7 +558,7 @@ fn a36_no_damaged_file_is_ever_returned_as_other_content() {
 #[test]
 fn crash_leftover_in_tmp_is_ignored_then_collected_after_grace() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, clock) = manual_store(dir.path());
+    let store = FsStore::open(dir.path()).unwrap();
     let content = noise(9, 50_000);
     let digest = put_bytes(&store, &content).unwrap();
     let stored = fs::read(store.object_path(&digest)).unwrap();
@@ -602,7 +602,12 @@ fn crash_leftover_in_tmp_is_ignored_then_collected_after_grace() {
     assert!(dead_writer.exists() && same_name.exists());
 
     // After it they are removed; the foreign file and the objects are not.
-    clock.advance(2 * HOUR);
+    // Temporary files carry operating-system timestamps, so the test ages
+    // them by moving those back.
+    for path in [&dead_writer, &same_name, &foreign] {
+        let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(SystemTime::now() - 2 * HOUR).unwrap();
+    }
     let report = store.gc(&|_| true, HOUR).unwrap();
     assert_eq!(
         report,
