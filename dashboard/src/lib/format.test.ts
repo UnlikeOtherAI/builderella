@@ -88,8 +88,13 @@ describe('other formatters', () => {
   });
 
   it('shortens identifiers for display', () => {
-    expect(shortId('job_0123456789abcdef0123456789abcdef')).toBe('job_01234567');
-    expect(shortId('boot_0123456789abcdef0123456789abcdef')).toBe('boot_01234567');
+    // The end, because time-ordered ids made close together share a start.
+    expect(shortId('job_0123456789abcdef0123456789abcdef')).toBe('job_…abcdef');
+    expect(shortId('job_01a218c9aaaa00000000000000111111')).not.toBe(
+      shortId('job_01a218c9aaaa00000000000000222222'),
+    );
+    expect(shortId('boot_0123456789abcdef0123456789abcdef')).toBe('boot_…abcdef');
+    expect(shortId('job_1234')).toBe('job_1234');
     expect(shortId('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')).toBe('ba7816bf8f01');
   });
 

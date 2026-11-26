@@ -93,13 +93,19 @@ export function formatPercent(fraction: number): string {
 }
 
 /**
- * Short display form of an identifier: `job_3f9a1c2b` for a prefixed id,
- * the first 12 characters for a digest. Never use the result as an id.
+ * Short display form of an identifier: `job_…7f3a2c` for a prefixed id.
+ * Identifiers are time-ordered, so ids made within a minute of each other
+ * share their first characters; the end is what tells them apart. A digest
+ * keeps its first 12 characters, the usual way to quote a hash. Never use
+ * the result as an id.
  */
 export function shortId(id: string): string {
   const underscore = id.indexOf('_');
-  if (underscore > 0 && underscore <= 5) return id.slice(0, underscore + 9);
-  return id.slice(0, 12);
+  if (underscore > 0 && underscore <= 5) {
+    const body = id.slice(underscore + 1);
+    return body.length <= 8 ? id : `${id.slice(0, underscore + 1)}…${body.slice(-6)}`;
+  }
+  return id.length <= 12 ? id : id.slice(0, 12);
 }
 
 /** `8 CPUs, 16 GiB memory, 20 GiB disk, 1 ios-simulator`. */
