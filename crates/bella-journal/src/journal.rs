@@ -258,6 +258,7 @@ macro_rules! in_own_transaction {
 in_own_transaction! {
     fn enrollment() -> Option<Enrollment>;
     fn set_enrollment(enrollment: &Enrollment) -> bool;
+    fn set_controller_endpoint(controller_url: &str, fingerprint: &str) -> bool;
     fn policy() -> Option<MachinePolicy>;
     fn set_policy(policy: &MachinePolicy) -> bool;
     fn connection_generation() -> u64;

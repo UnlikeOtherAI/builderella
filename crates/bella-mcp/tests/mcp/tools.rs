@@ -234,7 +234,7 @@ fn submit_job_returns_at_once_with_everything_the_agent_needs() {
     assert_eq!(data["idempotency_key"], "retry-0001");
     assert_eq!(
         data["dashboard_url"],
-        format!("https://fleet.test/dashboard/jobs/{job_id}")
+        format!("https://fleet.test/dashboard/#/jobs/{job_id}")
     );
     let text = text(&result);
     assert!(text.contains(&format!("submitted job {job_id}")), "{text}");

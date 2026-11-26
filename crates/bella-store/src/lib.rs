@@ -45,6 +45,11 @@
 //!   and collect on one root. Two puts of the same object both succeed and
 //!   leave one file.
 //! * **Collection never races a put.** See [`FsStore::gc`].
+//! * **A damaged object can be put right.** Re-putting an object costs one
+//!   header read, so `put` does not notice damage inside a stored body.
+//!   [`FsStore::repair`] is the explicit call that reads the stored copy in
+//!   full and replaces it if it is damaged; [`FsStore::remove`] deletes one
+//!   object unconditionally. Both take the publish lock the way `gc` does.
 //!
 //! # Platform differences
 //!
@@ -66,4 +71,4 @@ mod store;
 #[cfg(test)]
 mod tests;
 
-pub use store::{FsStore, GcReport, ObjectIter, StoreOptions, StoreStats, Verification};
+pub use store::{FsStore, GcReport, ObjectIter, Repaired, StoreOptions, StoreStats, Verification};

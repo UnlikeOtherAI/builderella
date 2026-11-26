@@ -61,8 +61,10 @@ pub struct ServerOptions {
     /// Most log text one `read_logs` call returns, in bytes. Values outside
     /// 256 bytes to 1 MiB are clamped.
     pub max_log_bytes: u64,
-    /// Base URL of the dashboard, for links in results. `{job}` is replaced
-    /// by the job id when present; otherwise `/jobs/<id>` is appended.
+    /// Base URL of the dashboard, for links in results. The dashboard
+    /// routes by URL fragment, so `/#/jobs/<id>` is appended. A URL that
+    /// contains `{job}` is used as a template instead: the placeholder is
+    /// replaced by the job id and nothing is appended.
     pub dashboard_url: Option<String>,
 }
 
