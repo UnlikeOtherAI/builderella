@@ -1424,11 +1424,19 @@ impl JobScope {
     /// Generates `CTRL_BREAK_EVENT` for the scope's process groups.
     ///
     /// Each root has its own console, so this process attaches to every
-    /// member console in turn, generates the event for the groups that can
-    /// be on it (every live member in case it leads a group, and the roots
-    /// that exited and may have left descendants), and detaches again. Events are always addressed to a group,
-    /// never to a whole console, so only processes of this scope receive
-    /// them. See the module documentation for when nothing is sent.
+    /// member console in turn, generates the event for the roots' process
+    /// groups that can be on it (live roots on that console, and roots that
+    /// exited and may have left descendants), and detaches again. Only ids
+    /// known to lead a group are used, because Windows delivers an event for
+    /// any other id to the whole console, including this process while it is
+    /// attached. A descendant that made a process group of its own is
+    /// therefore not signalled and is left to [`Scope::kill`].
+    ///
+    /// An adopted scope does not know its roots, so every live member is
+    /// tried in case it leads a group. One that does not makes Windows signal
+    /// the whole console, this process included: a caller that may stop
+    /// adopted scopes must handle `CTRL_BREAK_EVENT` itself (the `bella`
+    /// worker does). See the module documentation for when nothing is sent.
     pub fn send_ctrl_break(&mut self) -> Result<CtrlBreakReport, ContainError> {
         let mut report = CtrlBreakReport::default();
         let members = process_ids(self.handle())?;
@@ -1482,12 +1490,22 @@ impl JobScope {
                 .collect();
 
             let attached = console_processes();
-            // A live root shows up in `attached`; a root that exited may
-            // still have its group on any console.
+            // Only ids known to lead a group are signalled: Windows treats
+            // an id that is not a group leader like 0 and delivers the event
+            // to every process on the console, this one included. The roots
+            // were created with CREATE_NEW_PROCESS_GROUP. A live root shows
+            // up in `attached`; a root that exited may still have its group
+            // on any console. An adopted scope does not know its roots, so
+            // there every member is tried (see the method documentation).
             let mut groups: BTreeSet<u32> = exited_roots.iter().copied().collect();
             for other in attached.iter().filter(|other| **other != me) {
                 visited.insert(*other);
-                if members.contains(other) {
+                let leads_a_group = if self.roots.is_empty() {
+                    members.contains(other)
+                } else {
+                    self.roots.iter().any(|root| root.pid == *other)
+                };
+                if leads_a_group {
                     groups.insert(*other);
                 }
             }
