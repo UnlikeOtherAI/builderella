@@ -370,6 +370,29 @@ fn invalid_toml_reports_every_syntax_error_with_its_position() {
 }
 
 #[test]
+fn windows_line_endings_and_a_byte_order_mark_are_accepted() {
+    let unix =
+        "[project]\nname = \"demo\"\n\n[recipes.r]\ncpu = 1\nmemory = \"1GiB\"\nrun = \"make\"\n";
+    let windows = format!("\u{feff}{}", unix.replace('\n', "\r\n"));
+    assert_eq!(valid(&windows).recipes, valid(unix).recipes);
+
+    // Positions are the ones an editor shows.
+    let broken = windows
+        .replace("cpu = 1", "cpu = true")
+        .replace("[project]", "[project]\r\nx = 1");
+    let issues = invalid(&broken);
+    assert_eq!(issues.len(), 2, "{}", render(&issues));
+    let unknown = at(&issues, "project.x");
+    assert_eq!((unknown.line, unknown.column), (Some(2), Some(1)));
+    let cpu = at(&issues, "recipes.r.cpu");
+    assert_eq!((cpu.line, cpu.column), (Some(6), Some(7)));
+
+    let first_line = invalid("\u{feff}colour = 1\r\n[project]\r\nname = \"demo\"\r\n");
+    let issue = at(&first_line, "colour");
+    assert_eq!((issue.line, issue.column), (Some(1), Some(1)));
+}
+
+#[test]
 fn the_project_section_is_required() {
     let missing = only_error("[recipes.r]\nrun = \"x\"\ncpu = 1\nmemory = \"1GiB\"\n");
     assert_eq!(missing.path, "project");

@@ -95,6 +95,8 @@ impl PolicyLimits {
 /// A job specification ready to submit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Resolved {
+    /// The frozen specification. Its envelope is well formed and every
+    /// value is within the limits it was resolved against.
     pub spec: JobSpec,
     /// Warnings about the recipe and about values that policy lowered.
     pub warnings: Vec<Issue>,

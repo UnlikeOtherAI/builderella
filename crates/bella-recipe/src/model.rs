@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 /// into a job; only overrides and policy limits can still be refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecipeFile {
+    /// `[project]`.
     pub project: ProjectSection,
+    /// `[capture]`; empty when the file has none.
     pub capture: CaptureSection,
     /// Recipes by name, with `[defaults]` already merged in.
     pub recipes: BTreeMap<String, Recipe>,
@@ -52,7 +54,9 @@ pub struct CaptureSection {
 /// by policy is not reported as if the author had asked for more.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recipe {
+    /// The key of the recipe's table: `[a-z0-9_-]+`.
     pub name: String,
+    /// One line for listings.
     pub description: Option<String>,
     /// In execution order: every step after the steps it needs, otherwise
     /// as declared, cleanup steps last.
@@ -60,19 +64,34 @@ pub struct Recipe {
     /// Peak simultaneous demand: services summed, other steps maximised,
     /// never below the recipe-level declaration.
     pub envelope: ResourceEnvelope,
+    /// `hosts`, `target`, `test_runtime`, `requires` and `isolation`,
+    /// exactly as declared. Empty `build_hosts` means no `hosts` key: the
+    /// job is pinned to the platform that submits it.
     pub compatibility: Compatibility,
     pub priority: Priority,
+    /// `retry`.
     pub retry_class: RetryClass,
+    /// Total attempts including the first.
     pub max_attempts: Option<u32>,
+    /// Wall-clock limit for the whole job.
     pub timeout_secs: Option<u64>,
     pub cleanup_timeout_secs: Option<u64>,
     pub cloud: CloudMode,
+    /// The source may not leave the LAN.
     pub lan_only: bool,
+    /// `disconnected`: how long an attempt may continue without the
+    /// controller.
     pub disconnected_secs: Option<u64>,
+    /// Globs relative to the source root; they never leave it.
     pub artifacts: Vec<String>,
+    /// Globs for test reports, under the same rule as `artifacts`.
     pub test_reports: Vec<String>,
+    /// Environment for every step.
     pub env: BTreeMap<String, String>,
+    /// `Some` keeps the services alive after the other steps finish. Only
+    /// present when the recipe has at least one service.
     pub environment: Option<LeaseSpec>,
+    /// Suggested build parallelism, at least 1.
     pub parallelism: Option<u32>,
     /// Warnings about this recipe, ordered by position.
     pub warnings: Vec<Issue>,

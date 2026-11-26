@@ -17,6 +17,8 @@ pub enum Severity {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Issue {
     pub severity: Severity,
+    /// What is wrong, naming the offending text. One line, no trailing
+    /// period.
     pub message: String,
     /// Where the problem is, as a key path: `recipes.test.steps[1].needs[0]`.
     /// Empty for problems with the file as a whole. Paths starting with
@@ -32,6 +34,7 @@ pub struct Issue {
 }
 
 impl Issue {
+    /// `true` for an error, `false` for a warning.
     pub fn is_error(&self) -> bool {
         self.severity == Severity::Error
     }
@@ -79,13 +82,18 @@ pub(crate) struct Pos {
 /// Maps byte offsets to line and column.
 pub(crate) struct LineIndex<'t> {
     text: &'t str,
-    /// Byte offset at which each line starts.
+    /// Byte offset at which each line starts. A byte-order mark at the
+    /// start of the file is not part of the first line.
     starts: Vec<usize>,
 }
 
 impl<'t> LineIndex<'t> {
     pub fn new(text: &'t str) -> Self {
-        let mut starts = vec![0];
+        let mut starts = vec![if text.starts_with('\u{feff}') {
+            '\u{feff}'.len_utf8()
+        } else {
+            0
+        }];
         starts.extend(
             text.bytes()
                 .enumerate()
@@ -96,7 +104,7 @@ impl<'t> LineIndex<'t> {
     }
 
     pub fn pos(&self, offset: usize) -> Pos {
-        let offset = offset.min(self.text.len());
+        let offset = offset.clamp(self.starts[0], self.text.len());
         let line = self.starts.partition_point(|start| *start <= offset) - 1;
         let start = self.starts[line];
         // An offset inside a multi-byte character cannot come from the
@@ -142,6 +150,31 @@ mod tests {
         assert_eq!(index.pos(value), Pos { line: 2, column: 8 });
         assert_eq!(index.pos(text.len()), Pos { line: 3, column: 1 });
         assert_eq!(index.pos(text.len() + 50), Pos { line: 3, column: 1 });
+    }
+
+    #[test]
+    fn a_byte_order_mark_and_carriage_returns_do_not_shift_positions() {
+        let text = "\u{feff}a = 1\r\nb = 2\r\n";
+        let index = LineIndex::new(text);
+        assert_eq!(
+            index.pos(text.find('a').unwrap()),
+            Pos { line: 1, column: 1 }
+        );
+        assert_eq!(
+            index.pos(text.find('1').unwrap()),
+            Pos { line: 1, column: 5 }
+        );
+        assert_eq!(
+            index.pos(text.find('b').unwrap()),
+            Pos { line: 2, column: 1 }
+        );
+        assert_eq!(
+            index.pos(text.find('2').unwrap()),
+            Pos { line: 2, column: 5 }
+        );
+        // An offset inside the mark is reported as the start of the file.
+        assert_eq!(index.pos(0), Pos { line: 1, column: 1 });
+        assert_eq!(LineIndex::new("").pos(0), Pos { line: 1, column: 1 });
     }
 
     #[test]

@@ -64,6 +64,7 @@ pub fn parse(text: &str) -> Result<RecipeFile, Vec<Issue>> {
     let mut ctx = Ctx {
         index,
         issues: Vec::new(),
+        errors: 0,
         positions: BTreeMap::new(),
     };
     let (project, capture, recipes) = document_sections(&mut ctx, document.get_ref());
@@ -92,6 +93,9 @@ type Span = Range<usize>;
 struct Ctx<'t> {
     index: LineIndex<'t>,
     issues: Vec<Issue>,
+    /// How many of `issues` are errors, kept so that "did this part add an
+    /// error?" stays cheap however long the list grows.
+    errors: usize,
     positions: BTreeMap<String, Pos>,
 }
 
@@ -105,6 +109,9 @@ impl Ctx<'_> {
     }
 
     fn push(&mut self, severity: Severity, path: &str, pos: Option<Pos>, message: String) {
+        if severity == Severity::Error {
+            self.errors += 1;
+        }
         self.issues.push(Issue::new(severity, path, pos, message));
     }
 
@@ -124,7 +131,7 @@ impl Ctx<'_> {
     }
 
     fn error_count(&self) -> usize {
-        self.issues.iter().filter(|i| i.is_error()).count()
+        self.errors
     }
 }
 

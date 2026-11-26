@@ -55,12 +55,14 @@ pub fn find_recipe_file(start_dir: &Path) -> Option<PathBuf> {
 /// Why a recipe file could not be loaded.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
+    /// The file could not be opened or read, or is not UTF-8.
     #[error("cannot read `{}`", .path.display())]
     Io {
         path: PathBuf,
         #[source]
         source: std::io::Error,
     },
+    /// The file is larger than [`MAX_RECIPE_FILE_BYTES`].
     #[error("`{}` is larger than {} bytes", .path.display(), MAX_RECIPE_FILE_BYTES)]
     TooLarge { path: PathBuf },
     /// The file was read but is not a valid recipe file. `issues` holds
