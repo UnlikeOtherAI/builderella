@@ -1178,7 +1178,7 @@ async fn a_heartbeat_sequence_gap_forces_a_reconcile() {
 /// Garbage collection removes unreferenced objects past the grace period
 /// and keeps the manifest and files of a snapshot a live job uses.
 #[tokio::test]
-async fn garbage_collection_keeps_what_live_jobs_and_artifacts_need() {
+async fn garbage_collection_keeps_what_live_jobs_need() {
     let harness = Harness::start().await;
     let developer = harness.developer().await;
     let orphan = b"nobody refers to this".to_vec();
@@ -1219,4 +1219,93 @@ async fn garbage_collection_keeps_what_live_jobs_and_artifacts_need() {
     let collected = harness.handle().collect_garbage().await.unwrap();
     assert_eq!(collected.objects_removed, 2, "{collected:?}");
     assert_eq!(status(snapshot.manifest_digest).await, 404);
+}
+
+/// Planning, the queue, and an administrator renaming, draining and
+/// retiring a machine.
+#[tokio::test]
+async fn plan_queue_and_machine_administration() {
+    use bella_core::api::{PlanRequest, PlanResponse, QueueView, UpdateMachineRequest};
+
+    let harness = Harness::start().await;
+    let developer = harness.developer().await;
+    let plan = |memory_gib| PlanRequest {
+        project: "app".into(),
+        spec: spec_with_memory(memory_gib),
+        origin_platform: platform(),
+    };
+    let empty: PlanResponse = developer.post("/plan", &plan(1)).await;
+    assert!(!empty.feasible);
+    assert!(!empty.issues.is_empty());
+
+    let mut worker = harness.worker("builder").await;
+    let fits: PlanResponse = developer.post("/plan", &plan(1)).await;
+    assert!(fits.feasible, "{fits:?}");
+    assert_eq!(fits.placements.len(), 1);
+    assert!(fits.placements[0].eligible_now);
+    assert_eq!(fits.placements[0].machine_name, "builder");
+    let too_big: PlanResponse = developer.post("/plan", &plan(4096)).await;
+    assert!(!too_big.placements[0].eligible_now);
+    assert!(too_big.placements[0].blocker.is_some());
+    // Planning submits nothing.
+    assert!(developer.get::<Vec<JobView>>("/jobs").await.is_empty());
+
+    let admin = harness.admin_api();
+    let path = format!("/machines/{}", worker.machine_id);
+    let renamed: bella_core::api::MachineView = admin
+        .try_patch(
+            &path,
+            &UpdateMachineRequest {
+                name: Some("renamed".into()),
+                drain: Some(true),
+                ..UpdateMachineRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(renamed.name, "renamed");
+    assert!(renamed.flags.contains(&AvailabilityFlag::Draining));
+    worker
+        .expect_command("SetDrain", |command| match command {
+            ControllerCommand::SetDrain { draining: true } => Some(()),
+            _ => None,
+        })
+        .await;
+
+    // A draining machine is offered nothing; the job waits in the queue.
+    let waiting = harness.submit(&developer, "app", spec()).await;
+    assert_no_start_or_offer(&mut worker, "a draining machine").await;
+    let queue: QueueView = developer.get("/queue").await;
+    assert_eq!(queue.entries.len(), 1);
+    let _: bella_core::api::MachineView = admin
+        .try_patch(
+            &path,
+            &UpdateMachineRequest {
+                drain: Some(false),
+                ..UpdateMachineRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    let (_, offer) = worker.expect_offer().await;
+    assert_eq!(offer.job_id, waiting.id);
+
+    // Retiring closes its connection and its token stops working.
+    let token = worker.token.clone();
+    let _: bella_core::api::MachineView = admin
+        .try_patch(
+            &path,
+            &UpdateMachineRequest {
+                retire: Some(true),
+                ..UpdateMachineRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    let reason = worker.expect_close().await;
+    assert!(reason.contains("retired"), "{reason}");
+    assert_eq!(
+        open_socket(harness.addr(), None, &token).await.err(),
+        Some(401)
+    );
 }

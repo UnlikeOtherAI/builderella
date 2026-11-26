@@ -873,6 +873,7 @@ impl Session {
                     if released {
                         lock(&self.app.pending_cancels).remove(&attempt.attempt_id);
                         lock(&self.app.finish_sent).remove(&attempt.attempt_id);
+                        lock(&self.app.forced_reconciles).remove(&attempt.attempt_id);
                     }
                     self.app.changed();
                 }
