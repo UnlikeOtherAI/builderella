@@ -659,10 +659,9 @@ impl Session {
             .app
             .db(move |ledger| ledger.revoke_offer(&reference, &text))
             .await;
-        match revoked {
-            // A start permit exists: the attempt may run and stays as it is.
-            Err(LedgerError::InvalidState(_)) => return,
-            Ok(_) | Err(_) => {}
+        // A start permit exists: the attempt may run and stays as it is.
+        if let Err(LedgerError::InvalidState(_)) = revoked {
+            return;
         }
         self.command(ControllerCommand::Revoke {
             attempt: attempt.clone(),

@@ -160,7 +160,7 @@ pub(crate) fn router(app: App) -> Router {
         .route("/worker/ws", get(worker::upgrade))
         .route(
             "/objects/missing",
-            post(objects::missing).layer(large.clone()),
+            post(objects::missing).layer(large),
         )
         .route(
             "/objects/{digest}",

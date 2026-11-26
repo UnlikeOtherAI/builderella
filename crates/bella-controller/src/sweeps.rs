@@ -360,7 +360,9 @@ async fn environment_leases(app: &App) -> Result<(), LedgerError> {
 
 /// Delete objects that nothing refers to and that are older than the grace
 /// period. Live objects are the manifests of snapshots still in use, every
-/// object those manifests list, and every recorded artifact.
+/// object those manifests list, and every recorded artifact. When a live
+/// manifest cannot be read the pass collects nothing and fails, because
+/// the objects it lists cannot be identified.
 ///
 /// Snapshot registration and job submission are held off while this runs,
 /// so neither can come to rely on an object this pass is about to remove:
@@ -374,16 +376,21 @@ pub(crate) async fn collect_garbage(app: &App) -> Result<GcReport, Failure> {
             let roots = app.ledger.live_digests()?;
             let mut live: HashSet<Digest> = roots.artifacts.into_iter().collect();
             for manifest_digest in roots.snapshot_manifests {
-                match get_bytes(app.store.as_ref(), &manifest_digest)
+                let manifest = get_bytes(app.store.as_ref(), &manifest_digest)
                     .map_err(|error| error.to_string())
                     .and_then(|bytes| {
                         serde_json::from_slice::<Manifest>(&bytes).map_err(|error| error.to_string())
-                    }) {
+                    });
+                match manifest {
                     Ok(manifest) => live.extend(manifest.digests()),
                     Err(error) => {
-                        // Its files cannot be named, so they cannot be
-                        // protected; say so rather than fail the whole pass.
-                        warn!(manifest = %manifest_digest, %error, "a live snapshot's manifest could not be read");
+                        // Its files cannot be named, so nothing can be told
+                        // apart from them: collecting now could delete the
+                        // source of a live snapshot. Collect nothing.
+                        return Err(Failure::internal(format!(
+                            "live snapshot manifest {manifest_digest} could not be read ({error}); \
+                             no objects were collected"
+                        )));
                     }
                 }
                 live.insert(manifest_digest);
