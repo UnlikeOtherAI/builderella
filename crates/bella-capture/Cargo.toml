@@ -10,8 +10,8 @@ repository.workspace = true
 [dependencies]
 bella-core.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
+tracing.workspace = true
+# Spool files for objects too large to hold in memory.
 tempfile.workspace = true
 
 [lints]
