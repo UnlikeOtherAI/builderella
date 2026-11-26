@@ -17,5 +17,9 @@ rusqlite.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+
 [lints]
 workspace = true
