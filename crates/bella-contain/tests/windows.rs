@@ -36,6 +36,7 @@ const HELPER_ARGS: [&str; 5] = [
 ];
 const WAIT: Duration = Duration::from_secs(60);
 const DETACHED_PROCESS: u32 = 0x0000_0008;
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const REFUSED: i32 = 42;
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -425,6 +426,10 @@ fn a16_adopting_a_vanished_job_returns_none_and_harms_nobody() {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            // Without a console of its own, a process started while another
+            // test is briefly attached to a scope's console would inherit
+            // that console and die with it.
+            .creation_flags(DETACHED_PROCESS)
             .spawn()
             .unwrap(),
     );
@@ -548,6 +553,7 @@ fn a66_hidden_descendants_stay_in_the_job_and_die_with_it() {
     for pid in hidden {
         let listing = std::process::Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .unwrap();
         let listing = String::from_utf8_lossy(&listing.stdout).to_ascii_lowercase();

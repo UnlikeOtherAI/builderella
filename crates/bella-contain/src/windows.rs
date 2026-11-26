@@ -75,6 +75,11 @@
 //!   exits, which can be a background descendant rather than the root.
 //! * Each root gets its own windowless console (`CREATE_NO_WINDOW`) and its
 //!   own process group.
+//! * While [`Scope::terminate`] signals a scope, this process is attached to
+//!   that scope's console for a moment. Anything else the same process
+//!   starts in that window with an inherited console lands on the scope's
+//!   console and dies with it, so every other spawn in a worker must use
+//!   `CREATE_NO_WINDOW` or `DETACHED_PROCESS`.
 //!
 //! # Stopping
 //!
