@@ -992,7 +992,7 @@
         "attempts": []
       }
     ],
-    "queued": 9,
+    "queued": 11,
     "running": 10,
     "environments": 5
   },
@@ -1309,8 +1309,8 @@
               },
               {
                 "machine": "builder-2",
-                "code": "machine_draining",
-                "message": "is draining for a worker upgrade and accepts no new work",
+                "code": "machine_upgrading",
+                "message": "its worker is being upgraded and accepts no new work",
                 "permanent": false
               }
             ]
@@ -1372,6 +1372,12 @@
                 "machine": "infra-1",
                 "code": "builds_disabled",
                 "message": "builds are disabled by its policy (infrastructure only)",
+                "permanent": true
+              },
+              {
+                "machine": "linux-1",
+                "code": "placement_constraint",
+                "message": "the submission requires macos; this machine is linux-x86_64",
                 "permanent": true
               }
             ]
@@ -1555,6 +1561,108 @@
           "attempts": [],
           "last_event": 1128
         }
+      },
+      {
+        "position": 10,
+        "waiting_ms": 847500,
+        "job": {
+          "id": "job_6006db47c150154a965581ee0d1505ab",
+          "project_id": "prj_c1d64b2d4cb30f1be788cc4d246ddd9f",
+          "project_name": "harbor",
+          "principal_id": "prn_d4f0bc5a29de06b510f9aa428f1eedba",
+          "session": {
+            "id": "ses_e38a393cd3f376a7d4d4420a745973ac",
+            "label": "refactor scheduler",
+            "agent": "claude",
+            "origin_machine": "studio-1"
+          },
+          "snapshot_id": "a2407baa9745267adb08c288a0c55579caed515c1ba9e63bb31cf7630467dde2",
+          "recipe": "lint",
+          "priority": "background",
+          "phase": "queued",
+          "cleanup": "not_started",
+          "cancel_requested": false,
+          "queue_reason": {
+            "code": "overheated",
+            "message": "The only machine in pool `linux`, linux-1, is too hot to take new work. The job starts when it has cooled down.",
+            "blockers": [
+              {
+                "machine": "linux-1",
+                "code": "overheated",
+                "message": "thermal state is serious; no new work until the machine cools down",
+                "permanent": false
+              }
+            ]
+          },
+          "envelope": {
+            "initial": {
+              "cpu_milli": 1000,
+              "memory_bytes": 2147483648,
+              "disk_bytes": 10737418240
+            },
+            "peak": {
+              "cpu_milli": 2000,
+              "memory_bytes": 4294967296,
+              "disk_bytes": 10737418240
+            },
+            "maximum": {
+              "cpu_milli": 2000,
+              "memory_bytes": 6442450944,
+              "disk_bytes": 10737418240
+            }
+          },
+          "created_at": 1794999151000,
+          "updated_at": 1794999996000,
+          "attempts": [],
+          "last_event": 1129
+        }
+      },
+      {
+        "position": 11,
+        "waiting_ms": 558500,
+        "job": {
+          "id": "job_243e37a09960a9807c6207567802dcc2",
+          "project_id": "prj_7dc917b8467946430a3e5354d5472ece",
+          "project_name": "nimbus",
+          "principal_id": "prn_d4f0bc5a29de06b510f9aa428f1eedba",
+          "session": {
+            "id": "ses_1420c496e1612f2290ba147f4381ed8c",
+            "label": "onboarding screens",
+            "agent": "claude",
+            "origin_machine": "studio-1"
+          },
+          "snapshot_id": "28e96ddbb78ffb30f1f7c7c0d7d3063463d629b559f4437049f6aaf30e672cf5",
+          "recipe": "web-preview",
+          "priority": "normal",
+          "phase": "queued",
+          "cleanup": "not_started",
+          "cancel_requested": false,
+          "queue_reason": {
+            "code": "environment_quota",
+            "message": "Project nimbus keeps 2 of at most 2 environments, and this job would start another. It starts when one of them ends."
+          },
+          "envelope": {
+            "initial": {
+              "cpu_milli": 2000,
+              "memory_bytes": 4294967296,
+              "disk_bytes": 21474836480
+            },
+            "peak": {
+              "cpu_milli": 4000,
+              "memory_bytes": 8589934592,
+              "disk_bytes": 21474836480
+            },
+            "maximum": {
+              "cpu_milli": 4000,
+              "memory_bytes": 12884901888,
+              "disk_bytes": 21474836480
+            }
+          },
+          "created_at": 1794999440000,
+          "updated_at": 1794999996000,
+          "attempts": [],
+          "last_event": 1130
+        }
       }
     ],
     "shares": [
@@ -1574,7 +1682,7 @@
         "project_id": "prj_7dc917b8467946430a3e5354d5472ece",
         "name": "nimbus",
         "weight": 200,
-        "queued": 2,
+        "queued": 3,
         "running": 2,
         "reserved": {
           "cpu_milli": 12000,
@@ -1589,7 +1697,7 @@
         "project_id": "prj_c1d64b2d4cb30f1be788cc4d246ddd9f",
         "name": "harbor",
         "weight": 50,
-        "queued": 2,
+        "queued": 3,
         "running": 3,
         "reserved": {
           "cpu_milli": 8000,
@@ -2308,8 +2416,8 @@
           },
           {
             "machine": "builder-2",
-            "code": "machine_draining",
-            "message": "is draining for a worker upgrade and accepts no new work",
+            "code": "machine_upgrading",
+            "message": "its worker is being upgraded and accepts no new work",
             "permanent": false
           }
         ]
@@ -2426,6 +2534,12 @@
             "machine": "infra-1",
             "code": "builds_disabled",
             "message": "builds are disabled by its policy (infrastructure only)",
+            "permanent": true
+          },
+          {
+            "machine": "linux-1",
+            "code": "placement_constraint",
+            "message": "the submission requires macos; this machine is linux-x86_64",
             "permanent": true
           }
         ]
@@ -3012,6 +3126,300 @@
           "test_reports": [],
           "max_log_bytes": 67108864,
           "max_artifact_bytes": 2147483648
+        },
+        "disconnected_continuation_secs": 300
+      }
+    },
+    {
+      "id": "job_6006db47c150154a965581ee0d1505ab",
+      "project_id": "prj_c1d64b2d4cb30f1be788cc4d246ddd9f",
+      "project_name": "harbor",
+      "principal_id": "prn_d4f0bc5a29de06b510f9aa428f1eedba",
+      "session": {
+        "id": "ses_e38a393cd3f376a7d4d4420a745973ac",
+        "label": "refactor scheduler",
+        "agent": "claude",
+        "origin_machine": "studio-1"
+      },
+      "snapshot_id": "a2407baa9745267adb08c288a0c55579caed515c1ba9e63bb31cf7630467dde2",
+      "recipe": "lint",
+      "priority": "background",
+      "phase": "queued",
+      "cleanup": "not_started",
+      "cancel_requested": false,
+      "queue_reason": {
+        "code": "overheated",
+        "message": "The only machine in pool `linux`, linux-1, is too hot to take new work. The job starts when it has cooled down.",
+        "blockers": [
+          {
+            "machine": "linux-1",
+            "code": "overheated",
+            "message": "thermal state is serious; no new work until the machine cools down",
+            "permanent": false
+          }
+        ]
+      },
+      "envelope": {
+        "initial": {
+          "cpu_milli": 1000,
+          "memory_bytes": 2147483648,
+          "disk_bytes": 10737418240
+        },
+        "peak": {
+          "cpu_milli": 2000,
+          "memory_bytes": 4294967296,
+          "disk_bytes": 10737418240
+        },
+        "maximum": {
+          "cpu_milli": 2000,
+          "memory_bytes": 6442450944,
+          "disk_bytes": 10737418240
+        }
+      },
+      "created_at": 1794999151000,
+      "updated_at": 1794999996000,
+      "attempts": [],
+      "last_event": 1129,
+      "spec": {
+        "recipe": "lint",
+        "recipe_digest": "2714cdfbcb2abc96db26afcff69c89ba65e4b3db013137420f92a411f1562c6b",
+        "steps": [
+          {
+            "name": "lint",
+            "kind": "task",
+            "command": {
+              "type": "shell",
+              "script": "cargo fmt --all --check && cargo clippy -- -D warnings"
+            },
+            "depends_on": [],
+            "ports": []
+          }
+        ],
+        "envelope": {
+          "initial": {
+            "cpu_milli": 1000,
+            "memory_bytes": 2147483648,
+            "disk_bytes": 10737418240
+          },
+          "peak": {
+            "cpu_milli": 2000,
+            "memory_bytes": 4294967296,
+            "disk_bytes": 10737418240
+          },
+          "maximum": {
+            "cpu_milli": 2000,
+            "memory_bytes": 6442450944,
+            "disk_bytes": 10737418240
+          }
+        },
+        "compatibility": {
+          "build_hosts": [
+            {
+              "os": "linux"
+            }
+          ],
+          "requires": [],
+          "isolation": "native"
+        },
+        "placement": {
+          "type": "pool",
+          "pool": "linux"
+        },
+        "priority": "background",
+        "retry_class": "pure",
+        "max_attempts": 2,
+        "timeout_secs": 3600,
+        "cleanup_timeout_secs": 120,
+        "cloud": "existing_only",
+        "source_lan_only": false,
+        "outputs": {
+          "artifacts": [],
+          "test_reports": [],
+          "max_log_bytes": 67108864,
+          "max_artifact_bytes": 2147483648
+        },
+        "disconnected_continuation_secs": 300
+      }
+    },
+    {
+      "id": "job_243e37a09960a9807c6207567802dcc2",
+      "project_id": "prj_7dc917b8467946430a3e5354d5472ece",
+      "project_name": "nimbus",
+      "principal_id": "prn_d4f0bc5a29de06b510f9aa428f1eedba",
+      "session": {
+        "id": "ses_1420c496e1612f2290ba147f4381ed8c",
+        "label": "onboarding screens",
+        "agent": "claude",
+        "origin_machine": "studio-1"
+      },
+      "snapshot_id": "28e96ddbb78ffb30f1f7c7c0d7d3063463d629b559f4437049f6aaf30e672cf5",
+      "recipe": "web-preview",
+      "priority": "normal",
+      "phase": "queued",
+      "cleanup": "not_started",
+      "cancel_requested": false,
+      "queue_reason": {
+        "code": "environment_quota",
+        "message": "Project nimbus keeps 2 of at most 2 environments, and this job would start another. It starts when one of them ends."
+      },
+      "envelope": {
+        "initial": {
+          "cpu_milli": 2000,
+          "memory_bytes": 4294967296,
+          "disk_bytes": 21474836480
+        },
+        "peak": {
+          "cpu_milli": 4000,
+          "memory_bytes": 8589934592,
+          "disk_bytes": 21474836480
+        },
+        "maximum": {
+          "cpu_milli": 4000,
+          "memory_bytes": 12884901888,
+          "disk_bytes": 21474836480
+        }
+      },
+      "created_at": 1794999440000,
+      "updated_at": 1794999996000,
+      "attempts": [],
+      "last_event": 1130,
+      "spec": {
+        "recipe": "web-preview",
+        "recipe_digest": "acaf4a9219fff131caa2d0a23c7b9512697702f2f514b84a0a3c7f3188f8f536",
+        "steps": [
+          {
+            "name": "install",
+            "kind": "task",
+            "command": {
+              "type": "argv",
+              "argv": [
+                "npm",
+                "ci"
+              ]
+            },
+            "depends_on": [],
+            "ports": []
+          },
+          {
+            "name": "db",
+            "kind": "service",
+            "command": {
+              "type": "argv",
+              "argv": [
+                "postgres",
+                "-p",
+                "5433"
+              ]
+            },
+            "depends_on": [],
+            "readiness": {
+              "probe": {
+                "type": "tcp",
+                "port": 5433
+              },
+              "timeout_secs": 60,
+              "interval_ms": 500
+            },
+            "resources": {
+              "cpu_milli": 1000,
+              "memory_bytes": 2147483648,
+              "disk_bytes": 5368709120
+            },
+            "ports": [
+              5433
+            ]
+          },
+          {
+            "name": "app",
+            "kind": "service",
+            "command": {
+              "type": "argv",
+              "argv": [
+                "npm",
+                "run",
+                "preview"
+              ]
+            },
+            "depends_on": [
+              "install",
+              "db"
+            ],
+            "readiness": {
+              "probe": {
+                "type": "http",
+                "port": 5173,
+                "path": "/healthz",
+                "status": 200
+              },
+              "timeout_secs": 120,
+              "interval_ms": 500
+            },
+            "ports": [
+              5173
+            ]
+          },
+          {
+            "name": "smoke",
+            "kind": "test",
+            "command": {
+              "type": "argv",
+              "argv": [
+                "npm",
+                "run",
+                "test:smoke"
+              ]
+            },
+            "depends_on": [
+              "app"
+            ],
+            "ports": []
+          }
+        ],
+        "envelope": {
+          "initial": {
+            "cpu_milli": 2000,
+            "memory_bytes": 4294967296,
+            "disk_bytes": 21474836480
+          },
+          "peak": {
+            "cpu_milli": 4000,
+            "memory_bytes": 8589934592,
+            "disk_bytes": 21474836480
+          },
+          "maximum": {
+            "cpu_milli": 4000,
+            "memory_bytes": 12884901888,
+            "disk_bytes": 21474836480
+          }
+        },
+        "compatibility": {
+          "build_hosts": [],
+          "requires": [],
+          "isolation": "native"
+        },
+        "placement": {
+          "type": "prefer",
+          "platform": {
+            "os": "macos"
+          }
+        },
+        "priority": "normal",
+        "retry_class": "isolated_side_effects",
+        "max_attempts": 2,
+        "timeout_secs": 3600,
+        "cleanup_timeout_secs": 120,
+        "cloud": "existing_only",
+        "source_lan_only": false,
+        "outputs": {
+          "artifacts": [],
+          "test_reports": [],
+          "max_log_bytes": 67108864,
+          "max_artifact_bytes": 2147483648
+        },
+        "environment": {
+          "idle_timeout_secs": 900,
+          "lease_secs": 1800,
+          "max_lifetime_secs": 14400
         },
         "disconnected_continuation_secs": 300
       }

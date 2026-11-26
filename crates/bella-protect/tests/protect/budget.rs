@@ -280,19 +280,13 @@ fn availability_rules() {
             name: "thermal serious",
             setup: |h| h.sample().thermal = ThermalState::Serious,
             flags: &[AvailabilityFlag::Overheated],
-            refusal: Some((
-                QueueReasonCode::ForegroundProtection,
-                "thermal state is serious",
-            )),
+            refusal: Some((QueueReasonCode::Overheated, "thermal state is serious")),
         },
         Row {
             name: "thermal critical",
             setup: |h| h.sample().thermal = ThermalState::Critical,
             flags: &[AvailabilityFlag::Overheated],
-            refusal: Some((
-                QueueReasonCode::ForegroundProtection,
-                "thermal state is critical",
-            )),
+            refusal: Some((QueueReasonCode::Overheated, "thermal state is critical")),
         },
         Row {
             name: "thermal fair",

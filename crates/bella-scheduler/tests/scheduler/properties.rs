@@ -436,7 +436,8 @@ fn check(seed: u64, state: &FleetState, plan: &Schedule) {
             Code::ControllerReconciling
             | Code::PreviousAttemptUnresolved
             | Code::ProjectNotAllowed
-            | Code::ProjectConcurrencyLimit => {
+            | Code::ProjectConcurrencyLimit
+            | Code::EnvironmentQuota => {
                 assert!(reason.blockers.is_empty(), "{ctx}: {reason:?}");
             }
             code => {

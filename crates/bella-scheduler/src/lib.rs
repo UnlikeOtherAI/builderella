@@ -16,8 +16,9 @@
 //! `permanent` and are reported before temporary ones:
 //!
 //! * platform: the recipe's build hosts (or the submitting platform when it
-//!   declares none), its test runtime, and a `Require`, `Machine` or `Pool`
-//!   placement choice. All of these use `WrongPlatform`;
+//!   declares none) and its test runtime (`WrongPlatform`);
+//! * the submission's own `Require`, `Machine` or `Pool` placement choice
+//!   (`PlacementConstraint`);
 //! * the snapshot against the machine's filesystem (`WrongPlatform`);
 //! * isolation and capability requirements (`MissingCapability`; a
 //!   capability that is installed but occupied, unhealthy or unverified is
@@ -30,8 +31,10 @@
 //! freshness, reconciliation, availability flags, the worker's own
 //! admission answer, a recent rejection of this job, the machine's
 //! concurrency limit, capacity, and a machine kept free for another job.
-//! `Overheated` is reported as `ForegroundProtection` and `Upgrading` as
-//! `MachineDraining`, the closest existing codes.
+//! Each availability flag has its own code: an `Overheated` machine is
+//! reported as `Overheated` and one whose worker is being replaced as
+//! `MachineUpgrading`, distinct from foreground protection and from a
+//! drain its owner asked for.
 //!
 //! Capacity is `reserved + peak <= min(managed ceiling, effective budget)`
 //! in every dimension; see [`effective_capacity`]. The peak is the job's

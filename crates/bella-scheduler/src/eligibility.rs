@@ -180,6 +180,9 @@ impl<'a> Fleet<'a> {
         let compat = &spec.compatibility;
         let here = describe(machine);
         let wrong_platform = |message: String| blocker(machine, Code::WrongPlatform, true, message);
+        // The submission's own choice of platform, machine or pool.
+        let placement =
+            |message: String| blocker(machine, Code::PlacementConstraint, true, message);
 
         // Build host: the declared set, or the submitting platform when the
         // recipe declares none.
@@ -217,7 +220,7 @@ impl<'a> Fleet<'a> {
             PlacementChoice::Any | PlacementChoice::Prefer { .. } => {}
             PlacementChoice::Require { platform } => {
                 if !platform.matches(machine.platform, &machine.os_version) {
-                    return Some(wrong_platform(format!(
+                    return Some(placement(format!(
                         "the submission requires {platform}; this machine is {here}"
                     )));
                 }
@@ -225,13 +228,13 @@ impl<'a> Fleet<'a> {
             PlacementChoice::Machine { machine: wanted } => {
                 if machine.id.as_str() != wanted {
                     if machine.name != *wanted {
-                        return Some(wrong_platform(format!(
+                        return Some(placement(format!(
                             "the submission requires machine `{wanted}`"
                         )));
                     }
                     let sharing = self.name_counts.get(wanted.as_str()).copied().unwrap_or(0);
                     if sharing > 1 {
-                        return Some(wrong_platform(format!(
+                        return Some(placement(format!(
                             "the submission requires machine `{wanted}`, a name {sharing} \
                              machines share; request it by id ({})",
                             machine.id
@@ -246,7 +249,7 @@ impl<'a> Fleet<'a> {
                     } else {
                         format!("`{}`", machine.policy.pools.join("`, `"))
                     };
-                    return Some(wrong_platform(format!(
+                    return Some(placement(format!(
                         "the submission requires pool `{pool}`; this machine is in {member_of}"
                     )));
                 }
@@ -442,7 +445,7 @@ impl<'a> Fleet<'a> {
         }
         if has(Flag::Upgrading) {
             return Some(temporary(
-                Code::MachineDraining,
+                Code::MachineUpgrading,
                 "its worker is being upgraded and accepts no new work".to_string(),
             ));
         }
@@ -463,7 +466,7 @@ impl<'a> Fleet<'a> {
         }
         if has(Flag::Overheated) {
             return Some(temporary(
-                Code::ForegroundProtection,
+                Code::Overheated,
                 "overheated: thermal protection is holding back managed work".to_string(),
             ));
         }
