@@ -318,7 +318,7 @@ export function notAdmittingReasons(machine: MachineView): string[] {
   if (take('upgrading')) reasons.push('The worker is being upgraded.');
   if (take('quarantined')) {
     reasons.push(
-      'Holds quarantined capacity: cleanup of an earlier attempt could not be verified, so that reservation is not released.',
+      'Holds capacity from an earlier job whose cleanup could not be verified (quarantined), so that reservation is not released.',
     );
   }
   if (take('on_battery')) {
@@ -332,7 +332,7 @@ export function notAdmittingReasons(machine: MachineView): string[] {
   }
   if (take('pressure_limited')) {
     const pressure = telemetry ? ` (memory pressure: ${telemetry.memory_pressure})` : '';
-    reasons.push(`The protection loop is holding back new work under memory pressure${pressure}.`);
+    reasons.push(`Holding back new work while memory is under pressure${pressure}.`);
   }
   if (take('overheated')) {
     const thermal = telemetry ? ` (thermal state: ${telemetry.thermal})` : '';
@@ -355,7 +355,7 @@ export function notAdmittingReasons(machine: MachineView): string[] {
   const limit = machine.policy.max_concurrent_attempts;
   if (limit !== null && limit !== undefined && machine.attempts.length >= limit) {
     reasons.push(
-      `At its concurrency limit: ${machine.attempts.length} of ${limit} ${limit === 1 ? 'attempt' : 'attempts'}.`,
+      `At its limit of ${limit} ${limit === 1 ? 'job' : 'jobs'} at once (${machine.attempts.length} running).`,
     );
   }
   return reasons;

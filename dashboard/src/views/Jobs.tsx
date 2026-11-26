@@ -213,7 +213,7 @@ function JobTable({ jobs }: { jobs: JobView[] }) {
   const now = useNow(1000);
   return (
     <div className="table-wrap">
-      <table className="table table-stack">
+      <table className="table table-stack jobs-table">
         <thead>
           <tr>
             <th scope="col">Status</th>

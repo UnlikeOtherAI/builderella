@@ -134,12 +134,11 @@ function LoadCard({ machine, now }: { machine: MachineView; now: number }) {
     >
       {policyOnly ? (
         <p className="note note-warn">
-          Limits here are advisory{' '}
+          Limits here are advisory: jobs are kept within their share by policy, not by the operating system.{' '}
           <Help label="What advisory limits mean">
             The worker keeps jobs within their share by scheduling priority and by reacting to pressure. The
             operating system does not enforce a hard cap, so a job can briefly use more before the worker reacts.
           </Help>
-          : jobs are kept within their share by policy, not by the operating system.
         </p>
       ) : null}
       {guest ? (

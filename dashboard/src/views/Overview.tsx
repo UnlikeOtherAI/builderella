@@ -63,9 +63,10 @@ export function OverviewView() {
       <Attention items={attention} />
       <Headlines fleet={fleet} queue={queue} recent={recent} rows={rows} />
 
-      <div className="grid-2">
+      <div className="grid-2 overview-grid">
         <div className="stack-gap">
           <Card
+            className="ov-machines"
             title="Machines"
             actions={
               <Link to="/machines" className="card-link">
@@ -79,13 +80,14 @@ export function OverviewView() {
             </Loadable>
           </Card>
           <ServicesLine environments={environments} />
-          <Card title="Recent activity" description="What the controller recorded, newest first.">
+          <Card className="ov-activity" title="Recent activity" description="What the controller recorded, newest first.">
             <ActivityFeed fleet={fleet.data} jobs={active.data} queue={queue.data} />
           </Card>
         </div>
 
         <div className="stack-gap">
           <Card
+            className="ov-running"
             title="Running now"
             actions={
               <Link to="/jobs?show=running" className="card-link">
@@ -111,6 +113,7 @@ export function OverviewView() {
           </Card>
 
           <Card
+            className="ov-queue"
             title="Next in the queue"
             actions={
               <Link to="/queue" className="card-link">
@@ -460,7 +463,7 @@ function ServicesLine({ environments }: { environments: ReturnType<typeof useEnv
   const alive = environments.data ? aliveEnvironments(environments.data) : undefined;
   const ready = alive?.filter((environment) => environment.state === 'ready').length ?? 0;
   return (
-    <Link to="/services" className="card services-line">
+    <Link to="/services" className="card services-line ov-services">
       <Icon name="services" />
       <span>
         <strong>Services</strong>{' '}

@@ -9,6 +9,15 @@ import { Chip, Help } from './ui';
  */
 export function JobResult({ job }: { job: JobView }) {
   const summary = summarizeJob(job);
+  // Before there is a result or any cleanup, the three parts would only say
+  // "not yet" three times; one sentence says it.
+  if (!job.outcome && job.cleanup === 'not_started' && job.phase !== 'quarantined') {
+    return (
+      <section className="card result result-pending" aria-label="Result and cleanup">
+        <p className="result-headline result-only">{summary.headline}</p>
+      </section>
+    );
+  }
   return (
     <section
       className={`card result ${summary.settled ? 'result-settled' : 'result-open'}`}

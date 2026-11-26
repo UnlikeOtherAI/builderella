@@ -79,3 +79,12 @@ describe('JobResult', () => {
     expect(screen.getByText('Not settled')).toBeTruthy();
   });
 });
+
+describe('JobResult before a result', () => {
+  it('says so in one sentence instead of three empty parts', () => {
+    const queued = jobs.find((j) => j.phase === 'queued')!;
+    render(<JobResult job={queued} />);
+    expect(screen.getByText(/^No result yet\./)).toBeTruthy();
+    expect(screen.queryByText('Not settled')).toBeNull();
+  });
+});
