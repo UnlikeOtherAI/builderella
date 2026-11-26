@@ -1,0 +1,47 @@
+[package]
+name = "bella-cli"
+description = "The `bella` binary: controller, worker, client commands and the MCP bridge."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "bella"
+path = "src/main.rs"
+
+[dependencies]
+bella-core.workspace = true
+bella-store.workspace = true
+bella-capture.workspace = true
+bella-recipe.workspace = true
+bella-probe.workspace = true
+bella-contain.workspace = true
+bella-journal.workspace = true
+bella-net.workspace = true
+bella-mcp.workspace = true
+bella-client.workspace = true
+bella-controller.workspace = true
+bella-worker.workspace = true
+bella-service.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tracing.workspace = true
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "sync", "time", "macros", "signal"] }
+# Argument parsing. Colour is left out so that output piped into another
+# program carries no escape sequences.
+clap = { version = "4.6", default-features = false, features = ["std", "derive", "env", "help", "usage", "error-context", "suggestions"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter"] }
+
+[target.'cfg(windows)'.dependencies]
+# Reads the service account's password without echoing it.
+rpassword = "7"
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

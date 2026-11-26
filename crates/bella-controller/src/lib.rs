@@ -99,6 +99,12 @@ const OBJECTS_DIR: &str = "objects";
 const TLS_DIR: &str = "tls";
 const BOOTSTRAP_ADMIN_NAME: &str = "bootstrap-admin";
 
+/// Whether a built dashboard is embedded in this binary. Without one, `/`
+/// serves a placeholder page that says how to build it.
+pub fn dashboard_embedded() -> bool {
+    dashboard::is_embedded()
+}
+
 /// The controller process, as a library.
 pub struct Controller;
 

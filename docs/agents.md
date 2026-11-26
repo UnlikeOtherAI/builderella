@@ -117,8 +117,11 @@ Arguments worth knowing:
 * `platform` is an operating system, optionally with an architecture:
   `linux`, `macos-aarch64`, `windows-x86_64`. It is a preference unless
   `require` is `true`. `machine` pins the job to one machine instead.
-* `cpu` (a number of CPUs) and `memory` (`512MiB`, `8GiB`) replace what the
-  recipe asks for. Fleet policy may clamp or refuse them.
+* `cpu` (a number of CPUs) and `memory` (`512MiB`, `8GiB`) set the
+  reservation of a `command` (1 CPU and 1 GiB by default). A recipe's
+  reservation is part of the recipe and cannot be overridden per job; `bella
+  mcp` refuses them together with `recipe`. Fleet policy may clamp or refuse
+  them.
 * `idempotency_key` makes a retry of `submit_job` safe: the same key with
   unchanged files returns the same job. One is generated per call otherwise.
 * `wait_job` takes `timeout_seconds` and `after_event`. Pass the `last_event`
