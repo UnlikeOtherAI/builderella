@@ -123,9 +123,10 @@ fn symlink(target: &str, link: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, link)
 }
 
+/// Windows resolves a link target only when it is spelled with `\`.
 #[cfg(windows)]
 fn symlink(target: &str, link: &Path) -> std::io::Result<()> {
-    std::os::windows::fs::symlink_file(target, link)
+    std::os::windows::fs::symlink_file(target.replace('/', "\\"), link)
 }
 
 #[test]
