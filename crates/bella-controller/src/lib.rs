@@ -367,7 +367,7 @@ impl Controller {
             epoch = app.epoch,
             fleet_id = %app.fleet_id,
             tls = tls.is_some(),
-            fingerprint = %fingerprint.map(|f| f.to_base64url()).unwrap_or_default(),
+            fingerprint = %fingerprint.map(|f| f.to_hex()).unwrap_or_default(),
             public_url = %app.public_url,
             dashboard = dashboard::is_embedded(),
             first_start = bootstrap_admin_token.is_some(),
