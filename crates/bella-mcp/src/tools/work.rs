@@ -79,13 +79,13 @@ pub(crate) fn properties() -> Map<String, Value> {
             "type": "number",
             "minimum": 0.001,
             "maximum": 4096,
-            "description": "CPUs to reserve, for example 4 or 0.5, instead of what the recipe asks for. Fleet policy may clamp or refuse it."
+            "description": "CPUs to reserve for a `command`, for example 4 or 0.5. Refused with a `recipe`, whose reservation comes from the recipe file. Fleet policy may clamp or refuse it."
         },
         "memory": {
             "type": "string",
             "minLength": 1,
             "maxLength": 32,
-            "description": "Memory to reserve, with a unit: `512MiB`, `8GiB`. Replaces what the recipe asks for. Fleet policy may clamp or refuse it."
+            "description": "Memory to reserve for a `command`, with a unit: `512MiB`, `8GiB`. Refused with a `recipe`, whose reservation comes from the recipe file. Fleet policy may clamp or refuse it."
         }
     });
     match properties {
