@@ -26,6 +26,9 @@ bella-protect = { path = "crates/bella-protect" }
 bella-net = { path = "crates/bella-net" }
 bella-mcp = { path = "crates/bella-mcp" }
 bella-cloud = { path = "crates/bella-cloud" }
+bella-client = { path = "crates/bella-client" }
+bella-controller = { path = "crates/bella-controller" }
+bella-worker = { path = "crates/bella-worker" }
 
 # Shared third-party crates. Keep this list short; a crate that only one
 # member needs is declared in that member's own Cargo.toml.
