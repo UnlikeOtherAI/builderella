@@ -900,6 +900,167 @@ tbody tr:last-child td {
   color: var(--warn-fg);
 }
 
+.machine-selected {
+  border: 2px solid var(--accent);
+}
+
+/* -------------------------------------------------------------- overview */
+
+.totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+}
+.total {
+  flex: 1 1 9rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+}
+.total dt {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.total dd {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.total-detail {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--warn-fg);
+}
+.overview h2 {
+  margin-top: 20px;
+}
+table.compact {
+  font-size: 0.8125rem;
+}
+table.compact th,
+table.compact td {
+  padding: 5px 8px;
+}
+table.compact tbody th {
+  color: var(--text);
+  font-size: inherit;
+}
+table.compact tbody tr:last-child th {
+  border-bottom: 0;
+}
+table.compact .chip {
+  font-size: 0.75rem;
+}
+.sub {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+/* A machine out of contact is marked by a bar as well as by words: dashed
+   while stale, solid and shaded once unreachable or disconnected. */
+tr.contact-stale > :first-child {
+  border-left: 5px dashed var(--warn-fg);
+}
+tr.contact-unreachable > :first-child,
+tr.contact-disconnected > :first-child {
+  border-left: 5px solid var(--bad-fg);
+}
+tr.contact-unreachable,
+tr.contact-disconnected {
+  background: repeating-linear-gradient(135deg, transparent 0 8px, var(--surface-2) 8px 16px);
+}
+.enforcement-tag {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.meter {
+  display: block;
+  min-width: 7rem;
+}
+.meter-text {
+  display: block;
+  white-space: nowrap;
+}
+.meter-bar {
+  display: block;
+  height: 8px;
+  border: 1px solid var(--text);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--seg-free);
+}
+.meter-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--seg-managed);
+}
+.meter-over {
+  color: var(--bad-fg);
+}
+.meter-over .meter-bar > span {
+  background: var(--bad-fg);
+}
+/* Job links stay on one line, so a long queue reason cannot fold them. */
+table.compact td > a {
+  white-space: nowrap;
+}
+table.compact .ident {
+  flex-wrap: nowrap;
+}
+.nowrap {
+  white-space: nowrap;
+}
+.running-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+}
+.running-list li {
+  white-space: nowrap;
+}
+.activity {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.activity.card {
+  padding: 4px 12px;
+  max-height: 26rem;
+  overflow-y: auto;
+  font-size: 0.8125rem;
+}
+.activity li {
+  display: flex;
+  gap: 12px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+}
+.activity li:first-child {
+  border-top: 0;
+}
+.activity time {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 760px) {
+  table.stack tbody th {
+    display: block;
+    border: 0;
+    padding: 2px 0;
+    text-align: left;
+  }
+  table.stack tr > :first-child {
+    padding-left: 8px;
+  }
+}
+
 /* ----------------------------------------------------------------- queue */
 
 .queue {

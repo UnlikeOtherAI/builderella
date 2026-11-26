@@ -11,6 +11,7 @@ import { AdminView } from './views/Admin';
 import { EnvironmentsView } from './views/Environments';
 import { FleetView } from './views/Fleet';
 import { JobView } from './views/Job';
+import { OverviewView } from './views/Overview';
 import { QueueView } from './views/Queue';
 import { SignIn } from './views/SignIn';
 
@@ -74,13 +75,16 @@ function Shell({ signedIn }: { signedIn: boolean }) {
         <span className="brand">Builderella</span>
         <nav aria-label="Views" className="nav">
           <NavLink to="/" end className={link}>
+            Overview
+          </NavLink>
+          <NavLink to="/fleet" className={link}>
             Fleet
           </NavLink>
           <NavLink to="/queue" className={link}>
             Queue
           </NavLink>
           <NavLink to="/jobs" className={link}>
-            Job
+            Jobs
           </NavLink>
           <NavLink to="/environments" className={link}>
             Environments
@@ -144,7 +148,9 @@ function Shell({ signedIn }: { signedIn: boolean }) {
           />
         ) : null}
         <Routes>
-          <Route path="/" element={<FleetView />} />
+          <Route path="/" element={<OverviewView />} />
+          <Route path="/fleet" element={<FleetView />} />
+          <Route path="/fleet/:machine" element={<FleetView />} />
           <Route path="/queue" element={<QueueView />} />
           <Route path="/jobs" element={<JobView />} />
           <Route path="/jobs/:id" element={<JobView />} />

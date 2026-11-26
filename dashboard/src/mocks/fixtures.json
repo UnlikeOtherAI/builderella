@@ -6682,76 +6682,137 @@
   "events": [
     {
       "seq": 1181,
-      "at": 1794999942000,
+      "at": 1794999240000,
       "entity": "fleet",
       "entity_id": "flt_5eb2ce291c7d227dd684ec83f9ddc057",
-      "kind": "fleet.reconciled"
+      "kind": "fleet.controller_started",
+      "data": {
+        "epoch": 7
+      }
     },
     {
       "seq": 1182,
-      "at": 1794999948000,
-      "entity": "job",
-      "entity_id": "job_50d9b6e6807f55db6507b8bab610b4c3",
-      "kind": "job.queued",
-      "job_id": "job_50d9b6e6807f55db6507b8bab610b4c3"
+      "at": 1794999400000,
+      "entity": "machine",
+      "entity_id": "mch_6998c5ea6af16bc9e5f02da0363d2c21",
+      "kind": "machine.unreachable"
     },
     {
       "seq": 1183,
-      "at": 1794999956000,
-      "entity": "machine",
-      "entity_id": "mch_33a6081d2172342f8ddf4f27589c6896",
-      "kind": "machine.stale",
+      "at": 1794999402000,
+      "entity": "attempt",
+      "entity_id": "att_557ea9e50a4b4d28e0a874935c5ae262",
+      "kind": "attempt.uncertain",
+      "job_id": "job_96642b36a83c4c78c5dc7a3019ab2c4c",
       "data": {
-        "flags": [
-          "overheated",
-          "disk_low",
-          "stale"
-        ]
+        "generation": 1,
+        "machine_id": "mch_6998c5ea6af16bc9e5f02da0363d2c21"
       }
     },
     {
       "seq": 1184,
+      "at": 1794999948000,
+      "entity": "job",
+      "entity_id": "job_50d9b6e6807f55db6507b8bab610b4c3",
+      "kind": "job.queued",
+      "job_id": "job_50d9b6e6807f55db6507b8bab610b4c3",
+      "data": {
+        "priority": "normal",
+        "recipe": "ci"
+      }
+    },
+    {
+      "seq": 1185,
+      "at": 1794999956000,
+      "entity": "machine",
+      "entity_id": "mch_33a6081d2172342f8ddf4f27589c6896",
+      "kind": "machine.stale"
+    },
+    {
+      "seq": 1186,
       "at": 1794999965000,
       "entity": "attempt",
       "entity_id": "att_f4bfd6b659513416d6151629ecbb16bf",
       "kind": "attempt.cleanup",
       "job_id": "job_db709dbd299db08f60a8a5dfb06e4be2",
       "data": {
-        "state": "processes_stopped"
+        "event": {
+          "detail": "",
+          "state": "processes_stopped",
+          "type": "cleanup"
+        },
+        "generation": 1,
+        "machine_id": "mch_33a6081d2172342f8ddf4f27589c6896"
       }
     },
     {
-      "seq": 1185,
-      "at": 1794999968000,
+      "seq": 1187,
+      "at": 1794999970000,
       "entity": "attempt",
       "entity_id": "att_31d0688d4de30e2f7d3d35f640bc12d1",
       "kind": "attempt.start_committed",
-      "job_id": "job_d932d92a2579ccba9a6cefdc23a34721"
+      "job_id": "job_d932d92a2579ccba9a6cefdc23a34721",
+      "data": {
+        "generation": 1,
+        "machine_id": "mch_cbe83cb256983b3d7af05523f7c657d1"
+      }
     },
     {
-      "seq": 1186,
+      "seq": 1188,
       "at": 1794999972000,
-      "entity": "environment",
-      "entity_id": "env_d932d92a2579ccba9a6cefdc23a34721",
-      "kind": "environment.starting",
-      "job_id": "job_d932d92a2579ccba9a6cefdc23a34721"
+      "entity": "attempt",
+      "entity_id": "att_31d0688d4de30e2f7d3d35f640bc12d1",
+      "kind": "attempt.preparing",
+      "job_id": "job_d932d92a2579ccba9a6cefdc23a34721",
+      "data": {
+        "generation": 1,
+        "machine_id": "mch_cbe83cb256983b3d7af05523f7c657d1"
+      }
     },
     {
-      "seq": 1187,
+      "seq": 1189,
+      "at": 1794999972000,
+      "entity": "job",
+      "entity_id": "job_d932d92a2579ccba9a6cefdc23a34721",
+      "kind": "job.preparing",
+      "job_id": "job_d932d92a2579ccba9a6cefdc23a34721",
+      "data": {
+        "generation": 1
+      }
+    },
+    {
+      "seq": 1190,
       "at": 1794999980000,
       "entity": "project",
       "entity_id": "prj_c1d64b2d4cb30f1be788cc4d246ddd9f",
       "kind": "project.policy_changed"
     },
     {
-      "seq": 1188,
+      "seq": 1191,
       "at": 1794999985000,
       "entity": "snapshot",
       "entity_id": "5c8be56230a1120d635c99032decb1ebdfec0c4ed2dd9c814504cf93febcfa17",
-      "kind": "snapshot.registered"
+      "kind": "snapshot.registered",
+      "data": {
+        "file_count": 1284
+      }
     },
     {
-      "seq": 1189,
+      "seq": 1192,
+      "at": 1794999988000,
+      "entity": "job",
+      "entity_id": "job_294f677a8f6c99e86065636ac3da8486",
+      "kind": "job.finished",
+      "job_id": "job_294f677a8f6c99e86065636ac3da8486",
+      "data": {
+        "generation": 1,
+        "outcome": {
+          "type": "succeeded"
+        }
+      }
+    },
+    {
+      "seq": 1193,
       "at": 1794999991000,
       "entity": "job",
       "entity_id": "job_408fd2300df0dac0f9a9c32777792de7",
@@ -6759,7 +6820,7 @@
       "job_id": "job_408fd2300df0dac0f9a9c32777792de7"
     },
     {
-      "seq": 1190,
+      "seq": 1194,
       "at": 1794999993000,
       "entity": "cloud",
       "entity_id": "overflow",
@@ -6770,15 +6831,19 @@
       }
     },
     {
-      "seq": 1191,
+      "seq": 1195,
       "at": 1794999997000,
       "entity": "attempt",
       "entity_id": "att_bd1f99584179488bb3858cc498e2e990",
       "kind": "attempt.offered",
-      "job_id": "job_f9baa17c97751fd34ab54ebf77b2c8c4"
+      "job_id": "job_f9baa17c97751fd34ab54ebf77b2c8c4",
+      "data": {
+        "generation": 1,
+        "machine_id": "mch_cbe83cb256983b3d7af05523f7c657d1"
+      }
     },
     {
-      "seq": 1192,
+      "seq": 1196,
       "at": 1794999999000,
       "entity": "job",
       "entity_id": "job_039a0876cd74e2765182009d6a5ae32e",

@@ -42,6 +42,7 @@ use bella_core::protocol::{ArtifactKind, Endpoint, LogStream, StepState, UsageSu
 use bella_core::resources::{Enforcement, EnforcementReport, ResourceEnvelope, ResourceVector};
 use bella_core::time::UnixMillis;
 use serde::Serialize;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 /// Fixed reference time ("now") in milliseconds since the Unix epoch.
@@ -1972,6 +1973,8 @@ fn projects(atlas: &Project, nimbus: &Project, harbor: &Project) -> Vec<ProjectV
     ]
 }
 
+/// Recent events, oldest first, with the kinds and payloads the controller
+/// records, plus one kind no client knows.
 fn events(jobs: &[JobView]) -> Vec<EventRecord> {
     let job_id = |key: &str| JobId::derive(key.as_bytes());
     let attempt_of = |key: &str| {
@@ -1983,7 +1986,7 @@ fn events(jobs: &[JobView]) -> Vec<EventRecord> {
             .unwrap_or_default()
     };
     let mut seq = 1_180;
-    let mut event = |secs: u64, entity: EntityKind, entity_id: String, kind: &str| {
+    let mut event = |secs: u64, entity: EntityKind, entity_id: String, kind: &str, data: Value| {
         seq += 1;
         EventRecord {
             seq,
@@ -1992,19 +1995,40 @@ fn events(jobs: &[JobView]) -> Vec<EventRecord> {
             entity_id,
             kind: kind.into(),
             job_id: None,
-            data: serde_json::Value::Null,
+            data,
         }
     };
     let for_job = |mut e: EventRecord, key: &str| {
         e.job_id = Some(job_id(key));
         e
     };
+    let machine = |name: &str| machine_id(name).to_string();
+    let on = |name: &str| json!({ "generation": 1, "machine_id": machine_id(name) });
+    let phase = json!({ "generation": 1 });
     vec![
         event(
-            58,
+            760,
             EntityKind::Fleet,
             FleetId::derive(b"fleet").to_string(),
-            "fleet.reconciled",
+            "fleet.controller_started",
+            json!({ "epoch": 7 }),
+        ),
+        event(
+            600,
+            EntityKind::Machine,
+            machine(HANDHELD_1),
+            "machine.unreachable",
+            Value::Null,
+        ),
+        for_job(
+            event(
+                598,
+                EntityKind::Attempt,
+                attempt_of("uncertain"),
+                "attempt.uncertain",
+                on(HANDHELD_1),
+            ),
+            "uncertain",
         ),
         for_job(
             event(
@@ -2012,45 +2036,58 @@ fn events(jobs: &[JobView]) -> Vec<EventRecord> {
                 EntityKind::Job,
                 job_id("q-schedulable").to_string(),
                 "job.queued",
+                json!({ "recipe": "ci", "priority": "normal" }),
             ),
             "q-schedulable",
         ),
-        EventRecord {
-            data: serde_json::json!({ "flags": ["overheated", "disk_low", "stale"] }),
-            ..event(
-                44,
-                EntityKind::Machine,
-                machine_id(LINUX_1).to_string(),
-                "machine.stale",
-            )
-        },
+        event(
+            44,
+            EntityKind::Machine,
+            machine(LINUX_1),
+            "machine.stale",
+            Value::Null,
+        ),
         for_job(
-            EventRecord {
-                data: serde_json::json!({ "state": "processes_stopped" }),
-                ..event(
-                    35,
-                    EntityKind::Attempt,
-                    attempt_of("cleaning"),
-                    "attempt.cleanup",
-                )
-            },
+            event(
+                35,
+                EntityKind::Attempt,
+                attempt_of("cleaning"),
+                "attempt.cleanup",
+                json!({
+                    "generation": 1,
+                    "machine_id": machine_id(LINUX_1),
+                    "event": { "type": "cleanup", "state": "processes_stopped", "detail": "" },
+                }),
+            ),
             "cleaning",
         ),
         for_job(
             event(
-                32,
+                30,
                 EntityKind::Attempt,
                 attempt_of("preparing"),
                 "attempt.start_committed",
+                on(BUILDER_1),
             ),
             "preparing",
         ),
         for_job(
             event(
                 28,
-                EntityKind::Environment,
-                EnvironmentId::derive(b"preparing").to_string(),
-                "environment.starting",
+                EntityKind::Attempt,
+                attempt_of("preparing"),
+                "attempt.preparing",
+                on(BUILDER_1),
+            ),
+            "preparing",
+        ),
+        for_job(
+            event(
+                28,
+                EntityKind::Job,
+                job_id("preparing").to_string(),
+                "job.preparing",
+                phase,
             ),
             "preparing",
         ),
@@ -2059,12 +2096,24 @@ fn events(jobs: &[JobView]) -> Vec<EventRecord> {
             EntityKind::Project,
             ProjectId::derive(b"harbor").to_string(),
             "project.policy_changed",
+            Value::Null,
         ),
         event(
             15,
             EntityKind::Snapshot,
             snapshot("capturing").to_string(),
             "snapshot.registered",
+            json!({ "file_count": 1_284 }),
+        ),
+        for_job(
+            event(
+                12,
+                EntityKind::Job,
+                job_id("finished-ok").to_string(),
+                "job.finished",
+                json!({ "generation": 1, "outcome": { "type": "succeeded" } }),
+            ),
+            "finished-ok",
         ),
         for_job(
             event(
@@ -2072,24 +2121,24 @@ fn events(jobs: &[JobView]) -> Vec<EventRecord> {
                 EntityKind::Job,
                 job_id("cancelling").to_string(),
                 "job.cancel_requested",
+                Value::Null,
             ),
             "cancelling",
         ),
-        EventRecord {
-            data: serde_json::json!({ "state": "held", "reason": "no paid capacity is authorised" }),
-            ..event(
-                7,
-                EntityKind::Cloud,
-                "overflow".into(),
-                "cloud.overflow_evaluated",
-            )
-        },
+        event(
+            7,
+            EntityKind::Cloud,
+            "overflow".into(),
+            "cloud.overflow_evaluated",
+            json!({ "state": "held", "reason": "no paid capacity is authorised" }),
+        ),
         for_job(
             event(
                 3,
                 EntityKind::Attempt,
                 attempt_of("offered"),
                 "attempt.offered",
+                on(BUILDER_1),
             ),
             "offered",
         ),
@@ -2099,6 +2148,7 @@ fn events(jobs: &[JobView]) -> Vec<EventRecord> {
                 EntityKind::Job,
                 job_id("capturing").to_string(),
                 "job.capturing",
+                Value::Null,
             ),
             "capturing",
         ),

@@ -1,9 +1,14 @@
 # Builderella dashboard
 
 The web UI of a Builderella controller: a static single-page app (React,
-TypeScript, Vite) with five views (Fleet, Queue, Job, Environments,
-Administration) and a sign-in screen. The controller embeds the built files
-and serves them at `/`; there is no frontend server.
+TypeScript, Vite) with six views (Overview, Fleet, Queue, Jobs,
+Environments, Administration) and a sign-in screen. The controller embeds the
+built files and serves them at `/`; there is no frontend server.
+
+Overview is the landing page: fleet totals, one row per machine, what is
+being launched, what is running, the first ten queued jobs, the environments
+kept alive and the latest 50 events. It only reads. Fleet, at `/fleet`, has
+the detail of each machine.
 
 It reads the REST API under `/api/v1` and follows the event stream at
 `/api/v1/events`. The wire types are the Rust types in
@@ -70,7 +75,7 @@ matches.
 src/api/         schemas, fetch layer, event stream, query hooks, mock layer
 src/lib/         formatting, capacity-bar arithmetic, lease and policy maths, labels
 src/components/  capacity bar, queue reason, job result, log viewer, small UI pieces
-src/views/       the five views and sign-in
+src/views/       the six views and sign-in
 src/mocks/       fixtures.json (generated)
 ```
 
@@ -78,7 +83,10 @@ src/mocks/       fixtures.json (generated)
 
 * Routing uses the URL fragment (`/#/queue`), so the controller only has to
   serve `index.html` at `/` and the files under `assets/`.
-* The first event-stream request carries no `after` parameter and expects
-  only new events; reconnects send `after=<last sequence seen>`.
+* The first event-stream request asks for recent history, so the activity
+  feed does not start empty: `after` is 300 below the newest `last_event`
+  among the latest 100 jobs (`0` without jobs). If the job list cannot be
+  read it sends no `after` and gets only new events. Reconnects send
+  `after=<last sequence seen>`.
 * The bearer token is kept in `localStorage` and removed on sign-out or when
   the controller answers 401.
