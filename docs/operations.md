@@ -140,4 +140,6 @@ another one is refused at connection time with the reason. To upgrade:
 | A Windows step that runs a `.bat` or `.cmd` file is refused | Run it through an explicit shell: `["cmd.exe", "/d", "/c", "build.cmd release"]`. |
 | A file the build needs is missing on the worker | Ignored and secret-looking files (`.env`, `*.pem`, `*.key`, …) are left out of snapshots. List what the build needs in `include_ignored` or `allow_secrets` in `builderella.toml` ([recipes.md](recipes.md)). |
 | A job waits with a reason | `bella explain <job>` says why it is not placed, per machine. |
+| The dashboard does not open in a browser | The fleet certificate is self-signed, so the browser has to be told to accept it once. Compare the SHA-256 fingerprint the browser shows with the one the controller printed before you do. Some embedded browsers refuse self-signed certificates altogether. |
+| A workstation never gets work | Check `bella fleet` for flags such as `disk_low`: the protected-workstation profile keeps 15% of the work volume (at least 20 GiB) free, and a machine below that takes no new work. |
 | SQLite "unable to open database file" or connection resets under load on macOS | The open-file limit. `bella` raises its soft limit; check the hard limit of the service. |
