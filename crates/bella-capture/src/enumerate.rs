@@ -512,7 +512,7 @@ mod tests {
         let same = [a.clone(), b.clone()];
         assert_eq!(first_difference(&same, &same), None);
         assert_eq!(
-            first_difference(&[a.clone(), b.clone()], &[a.clone()]),
+            first_difference(&same, std::slice::from_ref(&a)),
             Some("b".into())
         );
         assert_eq!(
@@ -521,7 +521,7 @@ mod tests {
         );
         let executable = candidate("a", Class::Tracked, Some(0o100755));
         assert_eq!(
-            first_difference(&[a.clone()], &[executable]),
+            first_difference(std::slice::from_ref(&a), &[executable]),
             Some("a".into())
         );
         let now_tracked = candidate("b", Class::Tracked, Some(0o100644));
