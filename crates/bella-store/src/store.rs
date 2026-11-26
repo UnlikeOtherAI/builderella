@@ -333,8 +333,8 @@ impl FsStore {
         let lock = File::open(&self.lock_path)?;
 
         for entry in self.walk()? {
-            let outcome =
-                entry.and_then(|(digest, path)| self.collect(&lock, &digest, &path, is_live, grace));
+            let outcome = entry
+                .and_then(|(digest, path)| self.collect(&lock, &digest, &path, is_live, grace));
             match outcome {
                 Ok(Collected::Live) => report.objects_live += 1,
                 Ok(Collected::InGrace) => report.objects_in_grace += 1,

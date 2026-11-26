@@ -86,10 +86,7 @@ fn assert_rejected(store: &FsStore, digest: &Digest, case: &str) {
         Ok(bytes) => panic!("{case}: {} bytes were returned as valid", bytes.len()),
     }
     assert!(
-        matches!(
-            store.verify(digest).unwrap(),
-            Verification::Corrupt { .. }
-        ),
+        matches!(store.verify(digest).unwrap(), Verification::Corrupt { .. }),
         "{case}: verify did not report corruption"
     );
 }
@@ -477,7 +474,14 @@ fn a36_flipped_truncated_or_extended_object_is_rejected() {
 
     // Truncated: empty, inside the header, header only, inside the frame,
     // one byte short.
-    for cut in [0, 5, HEADER_LEN, HEADER_LEN + 1, good.len() / 2, good.len() - 1] {
+    for cut in [
+        0,
+        5,
+        HEADER_LEN,
+        HEADER_LEN + 1,
+        good.len() / 2,
+        good.len() - 1,
+    ] {
         fs::write(&path, &good[..cut]).unwrap();
         assert_rejected(&store, &digest, &format!("truncated to {cut} bytes"));
     }
@@ -656,7 +660,10 @@ fn a46_gc_keeps_live_and_young_objects_and_rechecks_liveness_before_delete() {
     assert!(store.contains(&young).unwrap());
     assert!(store.contains(&rescued).unwrap(), "re-check was ignored");
     assert!(!store.contains(&dead).unwrap());
-    assert_eq!(get_bytes(&store, &rescued).unwrap(), b"referenced while gc was running");
+    assert_eq!(
+        get_bytes(&store, &rescued).unwrap(),
+        b"referenced while gc was running"
+    );
 
     // The deleted object was asked about twice, the second time while it
     // still existed: the delete came after the last liveness check.
@@ -1008,7 +1015,11 @@ fn list_and_stats_count_only_published_objects() {
     let directory = Digest::of_bytes(b"a directory");
     fs::create_dir(store.object_path(&directory)).unwrap();
     let misplaced = Digest::of_bytes(b"misplaced");
-    let wrong_shard = if misplaced.shard() == "00" { "01" } else { "00" };
+    let wrong_shard = if misplaced.shard() == "00" {
+        "01"
+    } else {
+        "00"
+    };
     fs::write(
         dir.path()
             .join("objects")
