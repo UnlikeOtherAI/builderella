@@ -828,13 +828,18 @@ fn usage_reports_cpu_memory_and_processes() {
 fn stop_scope_terminates_then_kills_until_empty() {
     let mut scope = Guard::new("stop", &Limits::default());
     let mut polite = spawn_ready(&mut scope, "sleep", &["60"]);
-    // ping answers CTRL_BREAK with statistics and carries on, so it needs the kill.
+    // ping answers CTRL_BREAK with statistics and carries on, so it needs the
+    // kill. Its pipes stay open: it would stop if it could not write.
+    let ping = ProcessSpec {
+        argv: ["ping", "-n", "60", "127.0.0.1"].map(String::from).to_vec(),
+        cwd: work_dir(),
+        env: system_env(),
+    };
     let Spawned {
         child: mut stubborn,
-        ..
-    } = scope
-        .spawn(&shell("ping -n 60 127.0.0.1 >NUL 2>&1"))
-        .unwrap();
+        stdout: _ping_stdout,
+        stderr: _ping_stderr,
+    } = scope.spawn(&ping).unwrap();
     wait_until("ping to start", || !images(&scope, "ping.exe").is_empty());
 
     let membership =
