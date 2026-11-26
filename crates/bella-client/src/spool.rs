@@ -45,11 +45,13 @@ impl Spool {
     }
 
     /// Whether the content has been moved to a file.
+    #[cfg(test)]
     pub(crate) fn is_file(&self) -> bool {
         matches!(self.backing, Backing::File(_))
     }
 
     /// The whole content when it is still in memory.
+    #[cfg(test)]
     pub(crate) fn memory(&self) -> Option<&[u8]> {
         match &self.backing {
             Backing::Memory(cursor) => Some(cursor.get_ref()),
@@ -66,6 +68,7 @@ impl Spool {
     }
 
     /// Total number of bytes held. Leaves the position where it was.
+    #[cfg(test)]
     pub(crate) fn len(&mut self) -> io::Result<u64> {
         match &mut self.backing {
             Backing::Memory(cursor) => Ok(cursor.get_ref().len() as u64),
