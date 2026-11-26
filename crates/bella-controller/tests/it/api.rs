@@ -444,15 +444,25 @@ impl SseReader {
         }
     }
 
-    /// Every event that arrives before the stream is quiet for `quiet`.
+    /// Every event that arrives before no event has come for `quiet`.
+    /// Keep-alive comments do not count as activity.
     async fn drain(&mut self, quiet: Duration) -> Vec<u64> {
         let mut seen = Vec::new();
-        while let Some(frame) = self.next_within(quiet).await {
-            if let Sse::Event { id, .. } = frame {
-                seen.push(id);
+        let mut until = tokio::time::Instant::now() + quiet;
+        loop {
+            let left = until.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                return seen;
+            }
+            match self.next_within(left).await {
+                Some(Sse::Event { id, .. }) => {
+                    seen.push(id);
+                    until = tokio::time::Instant::now() + quiet;
+                }
+                Some(Sse::Comment) => {}
+                None => return seen,
             }
         }
-        seen
     }
 }
 
@@ -495,10 +505,16 @@ async fn events_replay_after_a_sequence_and_otherwise_only_new_ones() {
     // keep-alive comment comes while it is idle.
     let mut live = SseReader::open(&api, "", None).await;
     let mut comment = false;
-    while let Some(frame) = live.next_within(Duration::from_millis(600)).await {
-        match frame {
-            Sse::Comment => comment = true,
-            Sse::Event { id, .. } => panic!("an old event {id} was sent to a live stream"),
+    let until = tokio::time::Instant::now() + Duration::from_millis(700);
+    loop {
+        let left = until.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        match live.next_within(left).await {
+            Some(Sse::Comment) => comment = true,
+            Some(Sse::Event { id, .. }) => panic!("an old event {id} was sent to a live stream"),
+            None => break,
         }
     }
     assert!(comment, "an idle stream gets keep-alive comments");
