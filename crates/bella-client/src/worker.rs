@@ -397,6 +397,10 @@ impl Driver {
                 _ => None,
             };
 
+            // Set when a write finds the connection closing. Acted on after
+            // the `select!`, which keeps `self.in_tx` borrowed.
+            let mut peer_closing = false;
+
             tokio::select! {
                 permit = self.in_tx.reserve(), if !reading => match permit {
                     Ok(permit) => {
@@ -466,7 +470,7 @@ impl Driver {
                         Err(
                             WsError::ConnectionClosed
                             | WsError::Protocol(ProtocolError::SendAfterClosing),
-                        ) => self.stop_writing(),
+                        ) => peer_closing = true,
                         Err(error) => {
                             return Exit::Failed(socket_error(
                                 error,
@@ -497,6 +501,9 @@ impl Driver {
                         self.options.pong_timeout
                     )));
                 },
+            }
+            if peer_closing {
+                self.stop_writing();
             }
         }
     }
