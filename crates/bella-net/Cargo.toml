@@ -22,7 +22,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring", "zeroize"] }
 time = { version = "0.3", default-features = false }
 getrandom = "0.4"
-base64 = "0.22"
+base64 = "0.23"
 subtle = { version = "2", default-features = false }
 
 [dev-dependencies]
