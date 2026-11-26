@@ -50,6 +50,7 @@ pub enum Scope {
 }
 
 impl Scope {
+    /// The level this scope is at.
     pub fn kind(&self) -> ScopeKind {
         match self {
             Scope::Fleet => ScopeKind::Fleet,

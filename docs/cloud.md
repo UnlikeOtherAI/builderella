@@ -197,6 +197,9 @@ How the uncertain cases are decided:
 * **Create outcome never observed.** If the question can only be checked
   after the expiry, the estimate charges the quoted rate from the create
   call to the expiry and says so in its assumptions.
+* **Ownership.** A listing for an intention is believed only for resources
+  labelled with both this fleet and that intention. Anything else is
+  neither adopted nor deleted.
 * **Orphans.** A provider resource that no open intention accounts for is
   reported and recorded. It is deleted only if it carries this fleet's
   label. Otherwise it stays in `exposure()` until the provider stops

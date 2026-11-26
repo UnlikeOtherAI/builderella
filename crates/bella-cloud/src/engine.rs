@@ -507,6 +507,9 @@ pub struct Engine<'a> {
 }
 
 impl<'a> Engine<'a> {
+    /// An engine for `provider` on behalf of `fleet`. It holds no state of
+    /// its own: everything is in the database, so a new engine continues
+    /// where an earlier one stopped.
     pub fn new(
         db: &'a dyn Database,
         provider: &'a dyn Provider,
@@ -527,6 +530,28 @@ impl<'a> Engine<'a> {
 
     fn tx<T>(&self, work: impl FnMut(&Transaction<'_>) -> Result<T>) -> Result<T> {
         run(self.db, work)
+    }
+
+    fn carries_fleet_label(&self, resource: &OwnedResource) -> bool {
+        resource.labels.get(LABEL_FLEET).map(String::as_str) == Some(self.fleet.as_str())
+    }
+
+    /// The provider's listing for one intention, reduced to the resources
+    /// that provably belong to it: labelled with this fleet and with this
+    /// intention. Anything else an adapter returns is ignored, so nothing
+    /// is adopted or deleted on a listing's word alone.
+    fn owned_by(
+        &self,
+        id: &CloudIntentId,
+    ) -> std::result::Result<Vec<OwnedResource>, ProviderError> {
+        let listing = self.provider.find_by_intent(id)?;
+        Ok(listing
+            .into_iter()
+            .filter(|resource| {
+                self.carries_fleet_label(resource)
+                    && resource.labels.get(LABEL_INTENT).map(String::as_str) == Some(id.as_str())
+            })
+            .collect())
     }
 
     /// The intention as stored.
@@ -1144,7 +1169,7 @@ impl<'a> Engine<'a> {
             }
             state => return Ok(ReconcileOutcome::NotUncertain { state }),
         }
-        let listing = match self.provider.find_by_intent(id) {
+        let listing = match self.owned_by(id) {
             Ok(listing) => listing,
             Err(error) => {
                 return Ok(ReconcileOutcome::StillUnknown {
@@ -1484,7 +1509,7 @@ impl<'a> Engine<'a> {
                 before.state
             )));
         }
-        let listing = match self.provider.find_by_intent(id) {
+        let listing = match self.owned_by(id) {
             Ok(listing) => listing,
             Err(error) => {
                 let note = format!("the provider could not list the resources of {id}: {error}");
@@ -1537,7 +1562,7 @@ impl<'a> Engine<'a> {
         }
 
         // The listing, not the delete responses, proves that nothing remains.
-        let listing = match self.provider.find_by_intent(id) {
+        let listing = match self.owned_by(id) {
             Ok(listing) => listing,
             Err(error) => {
                 notes.push(format!(
@@ -1579,7 +1604,7 @@ impl<'a> Engine<'a> {
     /// instance was lost.
     fn observe(&self, seen: &Intent, now: UnixMillis, problems: &mut Vec<String>) -> Result<bool> {
         let id = &seen.id;
-        let listing = match self.provider.find_by_intent(id) {
+        let listing = match self.owned_by(id) {
             Ok(listing) => listing,
             Err(error) => {
                 problems.push(format!("{id}: the provider could not be asked: {error}"));
@@ -1816,8 +1841,7 @@ impl<'a> Engine<'a> {
                 // An open intention accounts for it.
                 continue;
             }
-            let ownership_proven =
-                resource.labels.get(LABEL_FLEET).map(String::as_str) == Some(self.fleet.as_str());
+            let ownership_proven = self.carries_fleet_label(resource);
             let mut note = match &known {
                 Some(known) => format!("belongs to settled intention {}", known.id),
                 None => "no intention records this resource".to_string(),

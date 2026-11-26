@@ -7,14 +7,14 @@ use bella_cloud::overflow::{LocalMachine, OverflowPolicy, OverflowPreset, evalua
 use bella_cloud::{
     Allowance, Billing, CapacityPhase, CloudError, Demand, Denial, EngineConfig, FailureKind,
     IntentState, LABEL_FLEET, LABEL_INTENT, LaunchOutcome, NewCapacity, OwnedResource, Period,
-    ProvisionOutcome, PurchaseModel, ReconcileOutcome, Refusal, RequestMode, ResourceKind,
-    ResourceState, Scope, ScopeKind, money,
+    ProviderError, ProvisionOutcome, PurchaseModel, ReconcileOutcome, Refusal, RequestMode,
+    ResourceKind, ResourceState, Scope, ScopeKind, money,
 };
 use bella_core::api::Role;
 use bella_core::job::CloudMode;
 use bella_core::platform::{Arch, Os, Platform};
 use bella_core::resources::{ResourceEnvelope, ResourceVector};
-use bella_core::{CloudIntentId, JobId, ProjectId, UnixMillis};
+use bella_core::{CloudIntentId, FleetId, JobId, ProjectId, UnixMillis};
 use common::{HOUR, MINUTE, SMALL_HOLD, SMALL_HOURLY, World, actor, allowance, denial, refusal};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -954,4 +954,40 @@ fn overflow_proposals_become_one_intention_however_often_they_are_submitted() {
         })
         .unwrap_err();
     assert_eq!(refusal(&error), &Refusal::ManualOnly);
+}
+
+#[test]
+fn a_resource_labelled_for_another_fleet_is_never_adopted_or_deleted() {
+    let world = World::new();
+    world.allow(10_000_000);
+    let engine = world.engine();
+    world
+        .sim
+        .faults(|f| f.fail_create.push_back(ProviderError::Timeout));
+    let id = world.authorized(&engine, &world.request());
+    engine.provision(&id, "boot").unwrap();
+    assert_eq!(world.state(&id), IntentState::Unknown);
+
+    // An instance that names this intention but belongs to another fleet.
+    let mut foreign = stray(&world, "i-foreign", false, Some(&id));
+    foreign.kind = ResourceKind::Instance;
+    foreign.labels.insert(
+        LABEL_FLEET.to_string(),
+        FleetId::generate().as_str().to_string(),
+    );
+    world.sim.inject_resource(foreign);
+
+    // It is not adopted: as far as this fleet can prove, nothing exists.
+    world.clock.advance(Duration::from_secs(120));
+    assert!(matches!(
+        engine.reconcile(&id).unwrap(),
+        ReconcileOutcome::RetryPermitted { .. }
+    ));
+    assert!(engine.cancel(&id, "not needed").unwrap().complete());
+    let report = engine.sweep().unwrap();
+    assert!(report.orphans.is_empty());
+
+    // And it is not deleted.
+    assert!(world.sim.delete_calls().is_empty());
+    assert_eq!(world.sim.snapshot().len(), 1);
 }
