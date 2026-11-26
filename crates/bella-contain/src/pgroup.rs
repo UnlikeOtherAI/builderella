@@ -103,6 +103,16 @@ pub const LOW_PRIORITY_NICE: i32 = 10;
 const KILL_DEADLINE: Duration = Duration::from_secs(2);
 const KILL_POLL: Duration = Duration::from_millis(10);
 
+/// PIDs of leaders whose exit status is held by a `std::process::Child` in
+/// a live scope of this process. Only that handle may wait for them.
+static OWNED_CHILDREN: Mutex<BTreeSet<i32>> = Mutex::new(BTreeSet::new());
+
+fn owned_children() -> MutexGuard<'static, BTreeSet<i32>> {
+    OWNED_CHILDREN
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
 /// One process as recorded in [`ScopeIdentity::detail`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ProcessRecord {
@@ -688,19 +698,17 @@ impl State {
         }
 
         // Orphans are re-parented to this process when it is PID 1 of a
-        // container or a subreaper. Reap the ones that are members; never
-        // wait for "any child", which would steal other exit statuses.
+        // container or a subreaper, and a leader outlives a scope object
+        // that was dropped. Reap the members among them that no handle
+        // owns; never wait for "any child", which would take exit statuses
+        // that belong to someone else.
         for (index, proc) in procs.iter().enumerate() {
             let own_zombie = walk.member[index] && proc.zombie && proc.ppid == own_pid;
-            let is_leader = self
-                .leaders
-                .iter()
-                .any(|leader| leader.running() && leader.rec.pid == proc.pid);
-            if own_zombie && !is_leader {
+            if own_zombie && !owned_children().contains(&proc.pid) {
                 let mut status = 0;
                 // SAFETY: `status` is a valid out-pointer and WNOHANG makes
                 // the call return at once. The PID is a zombie child of this
-                // process that no `std::process::Child` owns.
+                // process whose status no `std::process::Child` holds.
                 unsafe { libc::waitpid(proc.pid, &mut status, libc::WNOHANG) };
             }
         }
@@ -721,11 +729,13 @@ impl State {
                     signal: status.signal(),
                 };
                 leader.state = LeaderState::Exited(exit);
+                owned_children().remove(&leader.rec.pid);
                 Ok(Some(exit))
             }
             Ok(None) => Ok(None),
             Err(err) => {
                 leader.state = LeaderState::Lost;
+                owned_children().remove(&leader.rec.pid);
                 Err(err)
             }
         }
@@ -797,6 +807,19 @@ impl State {
         ScopeDetail {
             leaders,
             observed: self.known.values().map(|known| known.rec).collect(),
+        }
+    }
+}
+
+impl Drop for State {
+    /// The handles of leaders that are still running go away with the
+    /// scope; release them so that a scope adopted later may reap them.
+    fn drop(&mut self) {
+        let mut owned = owned_children();
+        for leader in &self.leaders {
+            if leader.running() {
+                owned.remove(&leader.rec.pid);
+            }
         }
     }
 }
@@ -920,11 +943,13 @@ impl Scope for PgScope {
         })?;
 
         let pid = i32::try_from(child.id()).unwrap_or(0);
+        owned_children().insert(pid);
         let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
             // SAFETY: killpg only sends a signal. `pid` is this process's
             // unreaped child, which made itself a group leader before exec.
             unsafe { libc::killpg(pid, libc::SIGKILL) };
             let _ = child.wait();
+            owned_children().remove(&pid);
             return Err(ContainError::Other(
                 "the new process has no output pipes".into(),
             ));

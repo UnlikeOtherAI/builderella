@@ -179,8 +179,14 @@ fn is_running(pid: i32) -> bool {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        // SAFETY: signal 0 sends nothing; it only checks that the PID exists.
-        unsafe { libc::kill(pid, 0) == 0 }
+        // `kill(pid, 0)` also succeeds for a zombie, so ask `ps` for the
+        // state: no output means no such process.
+        let output = std::process::Command::new("/bin/ps")
+            .args(["-o", "state=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        let state = String::from_utf8_lossy(&output.stdout);
+        !state.trim().is_empty() && !state.trim().starts_with('Z')
     }
 }
 
@@ -521,6 +527,43 @@ fn adopt_finds_a_scope_journaled_before_its_first_spawn() {
         wait_exit(spawned.child.as_mut(), WAIT).signal,
         Some(libc::SIGKILL)
     );
+}
+
+/// The worker drops its scope object and child handle, as it would lose
+/// them in a restart, then adopts the scope again from the identity.
+#[test]
+fn a_dropped_scope_can_be_adopted_killed_and_destroyed() {
+    let adapter = ProcessGroups::new();
+    let mut held = Held::new("dropped");
+    let spawned = held.spawn(&sh("sleep 120 & wait")).unwrap();
+    let leader = i32::try_from(spawned.child.pid()).unwrap();
+    wait_until("both members", WAIT, || alive(&*held) == 2);
+    let identity = held.identity();
+    drop(spawned);
+    drop(held.take());
+    assert!(is_running(leader), "dropping a scope must not stop it");
+
+    let mut adopted = Held::adopted(adapter.adopt(&identity).unwrap().unwrap());
+    assert_eq!(alive(&*adopted), 2);
+    adopted.kill().unwrap();
+    assert_eq!(adopted.members().unwrap(), Membership::Empty);
+    assert!(!is_running(leader));
+    // No handle owns the dead leader any more, so the adopted scope reaps
+    // it where the OS shows zombies. macOS does not; there it stays a
+    // zombie until this process waits for it or exits.
+    #[cfg(target_os = "linux")]
+    wait_until("the leader to be reaped", WAIT, || {
+        adopted.members().unwrap() == Membership::Empty
+            && !Path::new(&format!("/proc/{leader}")).exists()
+    });
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut status = 0;
+        // SAFETY: `status` is a valid out-pointer; the PID is this test's
+        // own child, whose handle was dropped above.
+        unsafe { libc::waitpid(leader, &mut status, libc::WNOHANG) };
+    }
+    assert!(adopted.take().destroy().is_ok());
 }
 
 #[test]
