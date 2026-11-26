@@ -3,18 +3,21 @@
 //!
 //! All routes live under [`API_PREFIX`] and take `Authorization: Bearer
 //! <token>`. Errors are an [`crate::ApiError`] body with the status from
-//! [`crate::ErrorCode::http_status`]. Route table (see `docs/api.md`):
+//! [`crate::ErrorCode::http_status`]. Route table (the wire details are in
+//! `docs/architecture.md` §6.16):
 //!
 //! ```text
 //! GET    /healthz                              unauthenticated liveness
+//! GET    /version                              controller and protocol version
 //! GET    /whoami                               WhoAmI
 //! POST   /tokens                               CreateTokenRequest -> TokenResponse        (admin)
 //! POST   /enroll/pairing-codes                 CreatePairingCodeRequest -> PairingCodeResponse (admin)
 //! POST   /enroll                               EnrollRequest -> EnrollResponse            (pairing code)
 //! GET    /worker/ws                            WebSocket, see `protocol`                  (machine)
 //! POST   /objects/missing                      MissingObjectsRequest -> MissingObjectsResponse
-//! PUT    /objects/{digest}                     raw bytes, optional `content-encoding: zstd`
-//! GET    /objects/{digest}                     raw bytes
+//! PUT    /objects/{digest}                     `application/vnd.builderella.object` (stored encoding) or raw bytes
+//! GET    /objects/{digest}                     stored encoding; `?raw=1` for the bytes
+//! HEAD   /objects/{digest}                     `x-bella-object-length`, or 404
 //! POST   /snapshots                            RegisterSnapshotRequest -> SnapshotView
 //! GET    /snapshots/{id}                       SnapshotView
 //! GET    /projects                             Vec<ProjectView>
