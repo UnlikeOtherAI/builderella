@@ -153,10 +153,10 @@ pub fn local_stop_deadline(
 }
 
 fn lapse_at(authority: &ExecutionAuthority, max_disconnected_secs: Option<u64>) -> UnixMillis {
-    let continuation = max_disconnected_secs.map_or(
-        authority.disconnected_continuation_secs,
-        |limit| limit.min(authority.disconnected_continuation_secs),
-    );
+    let continuation = max_disconnected_secs
+        .map_or(authority.disconnected_continuation_secs, |limit| {
+            limit.min(authority.disconnected_continuation_secs)
+        });
     authority.valid_until.plus_secs(continuation)
 }
 
@@ -843,7 +843,13 @@ impl JournalTx<'_> {
              VALUES (?1, ?2, ?3, ?4, ?5) \
              ON CONFLICT (attempt_id, step) DO UPDATE SET state = excluded.state, \
              exit_code = excluded.exit_code, updated_at = excluded.updated_at",
-            params![attempt.as_str(), step, name, exit_code, time_to_db(self.now)],
+            params![
+                attempt.as_str(),
+                step,
+                name,
+                exit_code,
+                time_to_db(self.now)
+            ],
         )?;
         Ok(())
     }
@@ -913,9 +919,7 @@ impl JournalTx<'_> {
     }
 
     fn records(&self, filter: &str, id: Option<&AttemptId>) -> Result<Vec<AttemptRecord>> {
-        let sql = format!(
-            "SELECT {RECORD_COLUMNS} FROM attempts {filter} ORDER BY created_at, attempt_id"
-        );
+        let sql = format!("SELECT {RECORD_COLUMNS} FROM attempts {filter} ORDER BY rowid");
         let raws = match id {
             Some(id) => self.all(&sql, params![id.as_str()], read_record)?,
             None => self.all(&sql, params![], read_record)?,
@@ -1043,7 +1047,7 @@ impl JournalTx<'_> {
     pub fn reports(&self) -> Result<Vec<AttemptReport>> {
         let rows = self.all(
             "SELECT attempt_id, generation, job_id, state, last_event_seq, acked_event_seq, \
-             reservation, usage FROM attempts ORDER BY created_at, attempt_id",
+             reservation, usage FROM attempts ORDER BY rowid",
             params![],
             |row| {
                 Ok(RawReport {

@@ -167,10 +167,7 @@ impl Journal {
     ///
     /// The closure must use the handle it is given. Calling back into this
     /// `Journal` from inside it deadlocks.
-    pub fn with_transaction<T>(
-        &self,
-        work: impl FnOnce(&JournalTx<'_>) -> Result<T>,
-    ) -> Result<T> {
+    pub fn with_transaction<T>(&self, work: impl FnOnce(&JournalTx<'_>) -> Result<T>) -> Result<T> {
         let mut inner = self.lock();
         let Inner { conn, boot } = &mut *inner;
         let transaction = conn

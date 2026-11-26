@@ -111,7 +111,7 @@ impl JournalTx<'_> {
     pub fn recover(&self, current_boot: &BootId) -> Result<Vec<RecoveredAttempt>> {
         let survivors = self.all(
             "SELECT attempt_id, boot_id, active_boot_id, state, expires_at, scope IS NOT NULL \
-             FROM attempts ORDER BY created_at, attempt_id",
+             FROM attempts ORDER BY rowid",
             params![],
             |row| {
                 Ok(Survivor {
@@ -194,7 +194,7 @@ impl JournalTx<'_> {
         let limit = self.max_disconnected_secs()?;
         let rows = self.all(
             "SELECT attempt_id, generation, state, expires_at, authority FROM attempts \
-             ORDER BY created_at, attempt_id",
+             ORDER BY rowid",
             params![],
             |row| {
                 Ok(Governed {
@@ -278,7 +278,7 @@ impl JournalTx<'_> {
              AND a.released_at IS NOT NULL AND a.released_at <= ?2 \
              AND NOT EXISTS (SELECT 1 FROM log_offsets AS l \
              WHERE l.attempt_id = a.attempt_id AND l.acked < l.produced) \
-             ORDER BY a.created_at, a.attempt_id",
+             ORDER BY a.rowid",
             params![released, time_to_db(now.minus(keep))],
             |row| row.get::<_, String>(0),
         )?;

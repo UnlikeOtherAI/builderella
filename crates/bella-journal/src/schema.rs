@@ -52,7 +52,7 @@ CREATE TABLE attempts (
     updated_at          INTEGER NOT NULL,
     authorized_at       INTEGER,
     released_at         INTEGER
-) WITHOUT ROWID;
+);
 CREATE INDEX attempts_by_job ON attempts (job_id, generation);
 
 CREATE TABLE attempt_steps (
@@ -135,8 +135,7 @@ pub(crate) fn migrate(conn: &mut Connection, upgrade: Upgrade) -> Result<()> {
     }
     for (version, statements) in MIGRATIONS {
         if *version > found {
-            tx.execute_batch(statements)
-                .map_err(JournalError::sqlite)?;
+            tx.execute_batch(statements).map_err(JournalError::sqlite)?;
             tx.execute_batch(&format!("PRAGMA user_version = {version}"))
                 .map_err(JournalError::sqlite)?;
         }
