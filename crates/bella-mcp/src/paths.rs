@@ -388,7 +388,11 @@ mod tests {
         assert!(created.is_dir());
 
         let escaping = outside.path().join("out");
-        assert!(roots.writable_dir("dest", escaping.to_str().unwrap()).is_err());
+        assert!(
+            roots
+                .writable_dir("dest", escaping.to_str().unwrap())
+                .is_err()
+        );
         assert!(!escaping.exists());
 
         let climbing = root.path().join("out").join("..").join("..").join("x");

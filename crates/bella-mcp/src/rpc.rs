@@ -14,6 +14,7 @@ pub(crate) const UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
 pub(crate) const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
 pub(crate) const META_CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
 pub(crate) const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
+pub(crate) const META_SUBSCRIPTION_ID: &str = "io.modelcontextprotocol/subscriptionId";
 
 /// Every protocol revision the server accepts, newest first.
 ///
@@ -113,10 +114,7 @@ impl RpcError {
     pub(crate) fn method_not_found(method: &str) -> Self {
         Self::new(
             METHOD_NOT_FOUND,
-            format!(
-                "Method not found: {}",
-                crate::sanitize::inline(method, 100)
-            ),
+            format!("Method not found: {}", crate::sanitize::inline(method, 100)),
         )
     }
 

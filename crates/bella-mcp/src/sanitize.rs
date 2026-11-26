@@ -42,7 +42,10 @@ fn skip_escape(chars: &mut Chars<'_>) {
         }
         Some(c) if ('\u{20}'..='\u{2f}').contains(&c) => {
             // nF sequence: intermediates then one final byte.
-            while chars.next_if(|c| ('\u{20}'..='\u{2f}').contains(c)).is_some() {}
+            while chars
+                .next_if(|c| ('\u{20}'..='\u{2f}').contains(c))
+                .is_some()
+            {}
             chars.next_if(|c| ('\u{30}'..='\u{7e}').contains(c));
         }
         Some(c) if ('\u{30}'..='\u{7e}').contains(&c) => {
@@ -56,8 +59,14 @@ fn skip_escape(chars: &mut Chars<'_>) {
 
 /// Parameters `0x30..=0x3f`, intermediates `0x20..=0x2f`, one final byte.
 fn skip_csi(chars: &mut Chars<'_>) {
-    while chars.next_if(|c| ('\u{30}'..='\u{3f}').contains(c)).is_some() {}
-    while chars.next_if(|c| ('\u{20}'..='\u{2f}').contains(c)).is_some() {}
+    while chars
+        .next_if(|c| ('\u{30}'..='\u{3f}').contains(c))
+        .is_some()
+    {}
+    while chars
+        .next_if(|c| ('\u{20}'..='\u{2f}').contains(c))
+        .is_some()
+    {}
     chars.next_if(|c| ('\u{40}'..='\u{7e}').contains(c));
 }
 
@@ -165,7 +174,8 @@ mod tests {
     #[test]
     fn operating_system_commands_are_removed_whole() {
         // A hyperlink, a window title ended by BEL and one ended by ST.
-        let raw = "a\u{1b}]8;;https://example.invalid\u{1b}\\link\u{1b}]8;;\u{1b}\\b\u{1b}]0;title\u{7}c";
+        let raw =
+            "a\u{1b}]8;;https://example.invalid\u{1b}\\link\u{1b}]8;;\u{1b}\\b\u{1b}]0;title\u{7}c";
         assert_eq!(strip_controls(raw), "alinkbc");
     }
 

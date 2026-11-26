@@ -78,7 +78,11 @@ fn handshake_works_for_every_handshake_revision() {
         let result = client.call("get_job", json!({"job_id": job.as_str()}));
         assert_eq!(result["isError"], false);
         assert!(crate::common::text(&result).contains("phase: executing"));
-        assert_eq!(result.get("structuredContent").is_some(), structured, "{version}");
+        assert_eq!(
+            result.get("structuredContent").is_some(),
+            structured,
+            "{version}"
+        );
 
         let (served, rest) = client.close();
         assert!(served.is_ok());
@@ -91,7 +95,10 @@ fn an_unknown_version_is_answered_with_the_newest_handshake_revision() {
     for requested in ["1999-01-01", "2030-01-01", STATELESS] {
         let (mut client, _root) = start();
         let reply = client.initialize(requested);
-        assert_eq!(reply["result"]["protocolVersion"], "2025-11-25", "{requested}");
+        assert_eq!(
+            reply["result"]["protocolVersion"], "2025-11-25",
+            "{requested}"
+        );
         // The session then runs under the revision that was answered.
         let listed = client.request("tools/list", json!({}));
         assert!(listed["result"]["tools"][0].get("outputSchema").is_some());
@@ -112,7 +119,12 @@ fn initialize_needs_a_version_and_happens_once() {
         json!({"protocolVersion": "2025-06-18", "capabilities": {}}),
     );
     assert_eq!(error_code(&again), -32600);
-    assert!(again["error"]["message"].as_str().unwrap().contains("already initialized"));
+    assert!(
+        again["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("already initialized")
+    );
 }
 
 #[test]
@@ -130,7 +142,10 @@ fn requests_before_initialize_are_refused() {
     }
     // Pings are allowed at any time; unknown methods stay unknown.
     assert_eq!(client.request("ping", json!({}))["result"], json!({}));
-    assert_eq!(error_code(&client.request("resources/list", json!({}))), -32601);
+    assert_eq!(
+        error_code(&client.request("resources/list", json!({}))),
+        -32601
+    );
     assert_eq!(error_code(&client.request("no/such", json!({}))), -32601);
 }
 
@@ -138,7 +153,12 @@ fn requests_before_initialize_are_refused() {
 fn unknown_methods_after_initialize_are_method_not_found() {
     let (mut client, _root) = start();
     client.initialize("2025-06-18");
-    for method in ["prompts/list", "resources/read", "logging/setLevel", "bogus"] {
+    for method in [
+        "prompts/list",
+        "resources/read",
+        "logging/setLevel",
+        "bogus",
+    ] {
         let reply = client.request(method, json!({}));
         assert_eq!(error_code(&reply), -32601, "{method}");
     }
@@ -152,7 +172,10 @@ fn stateless_revision_needs_no_handshake() {
     let discovered = client.request("server/discover", json!({}));
     let result = &discovered["result"];
     assert_eq!(result["resultType"], "complete", "{discovered}");
-    assert_eq!(result["supportedVersions"], json!(SUPPORTED_PROTOCOL_VERSIONS));
+    assert_eq!(
+        result["supportedVersions"],
+        json!(SUPPORTED_PROTOCOL_VERSIONS)
+    );
     assert!(result["capabilities"]["tools"].is_object());
     assert_eq!(
         result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
@@ -201,7 +224,10 @@ fn stateless_requests_are_validated_one_by_one() {
         unsupported["error"]["data"]["supported"],
         json!(SUPPORTED_PROTOCOL_VERSIONS)
     );
-    assert_eq!(error_code(&client.request("server/discover", json!({}))), -32022);
+    assert_eq!(
+        error_code(&client.request("server/discover", json!({}))),
+        -32022
+    );
 
     client.meta = Some(json!({"io.modelcontextprotocol/protocolVersion": STATELESS}));
     let incomplete = client.request("tools/list", json!({}));
@@ -237,7 +263,77 @@ fn both_styles_are_served_on_one_connection() {
     client.meta = None;
     assert_eq!(client.request("ping", json!({}))["result"], json!({}));
     // Discovery always needs the per-request metadata.
-    assert_eq!(error_code(&client.request("server/discover", json!({}))), -32602);
+    assert_eq!(
+        error_code(&client.request("server/discover", json!({}))),
+        -32602
+    );
+}
+
+#[test]
+fn subscriptions_are_acknowledged_and_end_without_touching_anything() {
+    let (mut client, _root) = start();
+    client.meta = Some(stateless_meta());
+
+    let cancelled = client.begin(
+        "subscriptions/listen",
+        json!({"notifications": {"toolsListChanged": true, "resourceSubscriptions": ["file:///x"]}}),
+    );
+    // The acknowledgement comes first and promises nothing: the tool list
+    // never changes while the server runs.
+    let acknowledged = client.next();
+    assert_eq!(
+        acknowledged["method"],
+        "notifications/subscriptions/acknowledged"
+    );
+    assert!(acknowledged.get("id").is_none());
+    assert_eq!(
+        acknowledged["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"],
+        cancelled
+    );
+    assert_eq!(acknowledged["params"]["notifications"], json!({}));
+
+    // The stream stays open and quiet while other requests are served.
+    assert_eq!(
+        client.request("tools/list", json!({}))["result"]["resultType"],
+        "complete"
+    );
+    let reused = json!({"jsonrpc": "2.0", "id": cancelled, "method": "tools/call",
+        "params": {"name": "list_fleet", "arguments": {}, "_meta": stateless_meta()}});
+    client.send(&reused);
+    assert_eq!(error_code(&client.next()), -32600);
+
+    // Cancelling ends it without a response.
+    client.notify("notifications/cancelled", json!({"requestId": cancelled}));
+    let kept = client.begin("subscriptions/listen", json!({}));
+    assert_eq!(
+        client.next()["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"],
+        kept
+    );
+    assert_eq!(
+        error_code(&client.request("subscriptions/listen", json!({"notifications": 1}))),
+        -32602
+    );
+
+    // At shutdown the open subscription is closed in an orderly way.
+    let (served, rest) = client.close();
+    assert!(served.is_ok());
+    assert_eq!(rest.len(), 1, "{rest:?}");
+    assert_eq!(rest[0]["id"], kept);
+    assert_eq!(rest[0]["result"]["resultType"], "complete");
+    assert_eq!(
+        rest[0]["result"]["_meta"]["io.modelcontextprotocol/subscriptionId"],
+        kept
+    );
+}
+
+#[test]
+fn subscriptions_do_not_exist_in_handshake_revisions() {
+    let (mut client, _root) = start();
+    client.initialize("2025-11-25");
+    assert_eq!(
+        error_code(&client.request("subscriptions/listen", json!({}))),
+        -32601
+    );
 }
 
 #[test]
@@ -264,13 +360,22 @@ fn invalid_requests_are_rejected_and_the_connection_survives() {
     let cases = [
         (json!(42), None),
         (json!("ping"), None),
-        (json!({"jsonrpc": "1.0", "id": 5, "method": "ping"}), Some(json!(5))),
+        (
+            json!({"jsonrpc": "1.0", "id": 5, "method": "ping"}),
+            Some(json!(5)),
+        ),
         (json!({"id": 6, "method": "ping"}), Some(json!(6))),
-        (json!({"jsonrpc": "2.0", "id": null, "method": "ping"}), None),
+        (
+            json!({"jsonrpc": "2.0", "id": null, "method": "ping"}),
+            None,
+        ),
         (json!({"jsonrpc": "2.0", "id": 1.5, "method": "ping"}), None),
         (json!({"jsonrpc": "2.0", "id": [1], "method": "ping"}), None),
         (json!({"jsonrpc": "2.0", "id": 7}), Some(json!(7))),
-        (json!({"jsonrpc": "2.0", "id": 8, "method": 9}), Some(json!(8))),
+        (
+            json!({"jsonrpc": "2.0", "id": 8, "method": 9}),
+            Some(json!(8)),
+        ),
         (json!([]), None),
         (json!([{"jsonrpc": "2.0", "id": 9, "method": "ping"}]), None),
     ];
@@ -285,7 +390,10 @@ fn invalid_requests_are_rejected_and_the_connection_survives() {
 
     // String ids work and are echoed exactly.
     client.send(&json!({"jsonrpc": "2.0", "id": "abc", "method": "ping"}));
-    assert_eq!(client.next(), json!({"jsonrpc": "2.0", "id": "abc", "result": {}}));
+    assert_eq!(
+        client.next(),
+        json!({"jsonrpc": "2.0", "id": "abc", "result": {}})
+    );
 }
 
 #[test]
@@ -307,13 +415,20 @@ fn blank_lines_and_crlf_are_tolerated() {
 fn an_oversized_message_is_refused_without_ending_the_session() {
     let (mut client, _root) = start();
     let mut huge = Vec::with_capacity(5 * 1024 * 1024);
-    huge.extend_from_slice(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":{\"x\":\"");
+    huge.extend_from_slice(
+        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":{\"x\":\"",
+    );
     huge.resize(5 * 1024 * 1024, b'a');
     huge.extend_from_slice(b"\"}}\n");
     client.send_bytes(&huge);
     let reply = client.next();
     assert_eq!(error_code(&reply), -32600, "{reply}");
-    assert!(reply["error"]["message"].as_str().unwrap().contains("exceeds"));
+    assert!(
+        reply["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("exceeds")
+    );
     assert_eq!(client.request("ping", json!({}))["result"], json!({}));
 }
 
@@ -323,7 +438,10 @@ fn notifications_are_never_answered() {
     client.initialize("2025-11-25");
     client.notify("notifications/initialized", json!({}));
     client.notify("notifications/something/unknown", json!({"a": 1}));
-    client.notify("notifications/cancelled", json!({"requestId": 999, "reason": "nothing there"}));
+    client.notify(
+        "notifications/cancelled",
+        json!({"requestId": 999, "reason": "nothing there"}),
+    );
     client.notify("notifications/cancelled", json!({}));
     // A request method without an id is a notification too.
     client.notify("tools/list", json!({}));
@@ -343,13 +461,27 @@ fn tool_call_protocol_errors_are_distinct_from_tool_errors() {
     let (mut client, _root) = start();
     client.initialize("2025-11-25");
 
-    let unknown = client.request("tools/call", json!({"name": "set_machine_policy", "arguments": {}}));
+    let unknown = client.request(
+        "tools/call",
+        json!({"name": "set_machine_policy", "arguments": {}}),
+    );
     assert_eq!(error_code(&unknown), -32602);
-    assert!(unknown["error"]["message"].as_str().unwrap().starts_with("Unknown tool"));
+    assert!(
+        unknown["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Unknown tool")
+    );
 
     assert_eq!(error_code(&client.request("tools/call", json!({}))), -32602);
-    assert_eq!(error_code(&client.request("tools/call", json!({"name": 5}))), -32602);
-    let bad_arguments = client.request("tools/call", json!({"name": "list_fleet", "arguments": [1]}));
+    assert_eq!(
+        error_code(&client.request("tools/call", json!({"name": 5}))),
+        -32602
+    );
+    let bad_arguments = client.request(
+        "tools/call",
+        json!({"name": "list_fleet", "arguments": [1]}),
+    );
     assert_eq!(error_code(&bad_arguments), -32602);
     assert_eq!(
         error_code(&client.request("tools/list", json!({"cursor": "page-2"}))),
@@ -360,7 +492,10 @@ fn tool_call_protocol_errors_are_distinct_from_tool_errors() {
     // result with isError, not a protocol error.
     let omitted = client.request("tools/call", json!({"name": "get_job"}));
     assert_eq!(omitted["result"]["isError"], true, "{omitted}");
-    let explicit_null = client.request("tools/call", json!({"name": "list_fleet", "arguments": null}));
+    let explicit_null = client.request(
+        "tools/call",
+        json!({"name": "list_fleet", "arguments": null}),
+    );
     assert_eq!(explicit_null["result"]["isError"], false, "{explicit_null}");
 }
 
@@ -380,13 +515,18 @@ fn batches_are_answered_as_one_array_under_2025_03_26() {
         {"jsonrpc": "2.0", "id": 90, "result": {}}
     ]));
     let reply = client.next();
-    let items = reply.as_array().unwrap_or_else(|| panic!("not a batch: {reply}"));
+    let items = reply
+        .as_array()
+        .unwrap_or_else(|| panic!("not a batch: {reply}"));
     assert_eq!(items.len(), 4, "{reply}");
     let by_id = |id: i64| items.iter().find(|item| item["id"] == id).unwrap();
     assert_eq!(by_id(1)["result"], json!({}));
     assert_eq!(by_id(2)["result"]["isError"], false);
     assert_eq!(by_id(3)["error"]["code"], -32601);
-    let unidentified: Vec<&Value> = items.iter().filter(|item| item.get("id").is_none()).collect();
+    let unidentified: Vec<&Value> = items
+        .iter()
+        .filter(|item| item.get("id").is_none())
+        .collect();
     assert_eq!(unidentified.len(), 1);
     assert_eq!(unidentified[0]["error"]["code"], -32600);
 
@@ -451,19 +591,36 @@ fn published_schemas_are_valid_and_match_sample_inputs() {
         assert_eq!(tool["inputSchema"]["additionalProperties"], false, "{name}");
     }
 
-    let schema = |name: &str| {
-        tools.iter().find(|tool| tool["name"] == name).unwrap()["inputSchema"].clone()
-    };
+    let schema =
+        |name: &str| tools.iter().find(|tool| tool["name"] == name).unwrap()["inputSchema"].clone();
     let id = "job_0190f3a2b4c57d8e9f00112233445566";
     let valid = [
         ("submit_job", json!({"recipe": "test"})),
-        ("submit_job", json!({"command": "cargo test", "priority": "interactive", "platform": "linux", "require": true})),
-        ("submit_job", json!({"command": ["cargo", "test"], "env": {"CI": "1"}, "cpu": 4, "memory": "8GiB", "idempotency_key": "retry-0001"})),
+        (
+            "submit_job",
+            json!({"command": "cargo test", "priority": "interactive", "platform": "linux", "require": true}),
+        ),
+        (
+            "submit_job",
+            json!({"command": ["cargo", "test"], "env": {"CI": "1"}, "cpu": 4, "memory": "8GiB", "idempotency_key": "retry-0001"}),
+        ),
         ("plan_job", json!({"recipe": "build", "machine": "mini"})),
-        ("wait_job", json!({"job_id": id, "timeout_seconds": 30, "after_event": 12})),
-        ("read_logs", json!({"job_id": id, "step": "build", "tail": true})),
-        ("get_artifacts", json!({"job_id": id, "download": true, "dest": "/tmp/out", "paths": ["bin/app"]})),
-        ("renew_environment", json!({"environment_id": "env_0190f3a2b4c57d8e9f00112233445566"})),
+        (
+            "wait_job",
+            json!({"job_id": id, "timeout_seconds": 30, "after_event": 12}),
+        ),
+        (
+            "read_logs",
+            json!({"job_id": id, "step": "build", "tail": true}),
+        ),
+        (
+            "get_artifacts",
+            json!({"job_id": id, "download": true, "dest": "/tmp/out", "paths": ["bin/app"]}),
+        ),
+        (
+            "renew_environment",
+            json!({"environment_id": "env_0190f3a2b4c57d8e9f00112233445566"}),
+        ),
         ("list_fleet", json!({})),
     ];
     for (name, sample) in valid {
@@ -473,7 +630,10 @@ fn published_schemas_are_valid_and_match_sample_inputs() {
         ("submit_job", json!({"recipe": "test", "wait": true})),
         ("submit_job", json!({"command": 5})),
         ("submit_job", json!({"command": []})),
-        ("submit_job", json!({"recipe": "test", "priority": "highest"})),
+        (
+            "submit_job",
+            json!({"recipe": "test", "priority": "highest"}),
+        ),
         ("submit_job", json!({"recipe": "test", "env": {"A": 1}})),
         ("submit_job", json!({"recipe": "test", "cpu": 0})),
         ("wait_job", json!({"timeout_seconds": 5})),
@@ -485,12 +645,18 @@ fn published_schemas_are_valid_and_match_sample_inputs() {
         ("cancel_job", json!({})),
     ];
     for (name, sample) in invalid {
-        assert!(check_schema(&schema(name), &sample, name).is_err(), "{name} accepted {sample}");
+        assert!(
+            check_schema(&schema(name), &sample, name).is_err(),
+            "{name} accepted {sample}"
+        );
         // The server enforces the same contract it publishes.
         let result = client.call(name, sample.clone());
         assert_eq!(result["isError"], true, "{name} ran with {sample}");
         let text = crate::common::text(&result);
-        assert!(text.starts_with(&format!("Invalid arguments for {name}")), "{text}");
+        assert!(
+            text.starts_with(&format!("Invalid arguments for {name}")),
+            "{text}"
+        );
     }
 }
 
@@ -498,17 +664,40 @@ fn published_schemas_are_valid_and_match_sample_inputs() {
 /// keywords, and `required` names only declared properties.
 fn walk(schema: &Value, at: &str) {
     const KEYWORDS: [&str; 16] = [
-        "type", "description", "title", "default", "enum", "properties", "required",
-        "additionalProperties", "maxProperties", "items", "minItems", "maxItems", "minLength",
-        "maxLength", "minimum", "maximum",
+        "type",
+        "description",
+        "title",
+        "default",
+        "enum",
+        "properties",
+        "required",
+        "additionalProperties",
+        "maxProperties",
+        "items",
+        "minItems",
+        "maxItems",
+        "minLength",
+        "maxLength",
+        "minimum",
+        "maximum",
     ];
-    let object = schema.as_object().unwrap_or_else(|| panic!("{at} is not an object"));
+    let object = schema
+        .as_object()
+        .unwrap_or_else(|| panic!("{at} is not an object"));
     assert!(object.contains_key("type"), "{at} has no type");
     for keyword in object.keys() {
-        assert!(KEYWORDS.contains(&keyword.as_str()), "{at}: keyword `{keyword}`");
+        assert!(
+            KEYWORDS.contains(&keyword.as_str()),
+            "{at}: keyword `{keyword}`"
+        );
     }
     let properties = object.get("properties").and_then(Value::as_object);
-    for name in object.get("required").and_then(Value::as_array).into_iter().flatten() {
+    for name in object
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let name = name.as_str().unwrap();
         assert!(
             properties.is_some_and(|known| known.contains_key(name)),
@@ -521,7 +710,10 @@ fn walk(schema: &Value, at: &str) {
     if let Some(items) = object.get("items") {
         walk(items, &format!("{at}[]"));
     }
-    if let Some(extra) = object.get("additionalProperties").filter(|extra| extra.is_object()) {
+    if let Some(extra) = object
+        .get("additionalProperties")
+        .filter(|extra| extra.is_object())
+    {
         walk(extra, &format!("{at}{{}}"));
     }
 }

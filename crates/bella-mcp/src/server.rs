@@ -13,8 +13,8 @@ use crate::diag;
 use crate::ops::FleetOps;
 use crate::paths::Roots;
 use crate::rpc::{
-    self, META_CLIENT_CAPABILITIES, META_PROTOCOL_VERSION, META_SERVER_INFO, Revision, RpcError,
-    SUPPORTED_PROTOCOL_VERSIONS,
+    self, META_CLIENT_CAPABILITIES, META_PROTOCOL_VERSION, META_SERVER_INFO, META_SUBSCRIPTION_ID,
+    Revision, RpcError, SUPPORTED_PROTOCOL_VERSIONS,
 };
 use crate::sanitize::inline;
 use crate::tools::{self, Call, Config, Finished, INSTRUCTIONS};
@@ -42,6 +42,8 @@ const LOG_BYTES_FLOOR: u64 = 256;
 /// How long clients may cache the tool list and the discovery result. Both
 /// are fixed for the life of the process.
 const CACHE_TTL_MS: u64 = 3_600_000;
+/// Open `subscriptions/listen` streams accepted at once.
+const MAX_SUBSCRIPTIONS: usize = 16;
 
 /// How the server is confined and tuned. The `bella mcp` command fills this
 /// in from its flags.
@@ -115,6 +117,7 @@ pub fn serve(
         shutdown: AtomicBool::new(false),
         session: Mutex::new(None),
         calls: Mutex::new(HashMap::new()),
+        subscriptions: Mutex::new(HashMap::new()),
         active: Mutex::new(0),
         idle: Condvar::new(),
     });
@@ -143,6 +146,16 @@ pub fn serve(
             .idle
             .wait_timeout_while(active, SHUTDOWN_GRACE, |running| *running > 0)
             .unwrap_or_else(PoisonError::into_inner);
+    }
+    // Tell clients that are still listening that their subscriptions ended
+    // in an orderly way.
+    let subscriptions: Vec<Reply> = lock(&server.subscriptions)
+        .drain()
+        .map(|(_, reply)| reply)
+        .collect();
+    for reply in subscriptions {
+        let closed = subscription_closed(&reply.id);
+        reply.result(closed);
     }
     *lock(&server.out) = None;
     result
@@ -211,6 +224,9 @@ struct Server {
     session: Mutex<Option<Revision>>,
     /// Running tool calls by request id, with the flag that withdraws them.
     calls: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Open `subscriptions/listen` requests by request id. They are answered
+    /// only when the server stops.
+    subscriptions: Mutex<HashMap<String, Reply>>,
     active: Mutex<usize>,
     idle: Condvar,
 }
@@ -513,6 +529,11 @@ impl Server {
                 let Some(id) = params.get("requestId").filter(|id| rpc::is_valid_id(id)) else {
                     return;
                 };
+                // A cancelled subscription simply ends, without a response.
+                let subscription = lock(&self.subscriptions).remove(&id.to_string());
+                if let Some(reply) = subscription {
+                    return reply.silent();
+                }
                 // Unknown or finished requests are ignored, as the
                 // specification asks. Only a pending wait observes the flag.
                 if let Some(flag) = lock(&self.calls).get(&id.to_string()) {
@@ -532,7 +553,12 @@ impl Server {
     fn request(server: &Arc<Self>, method: &str, params: Map<String, Value>, mut reply: Reply) {
         if !matches!(
             method,
-            "initialize" | "ping" | "server/discover" | "tools/list" | "tools/call"
+            "initialize"
+                | "ping"
+                | "server/discover"
+                | "subscriptions/listen"
+                | "tools/list"
+                | "tools/call"
         ) {
             return reply.error(RpcError::method_not_found(method));
         }
@@ -559,6 +585,9 @@ impl Server {
             "server/discover" => reply.error(RpcError::invalid_params(format!(
                 "Invalid params: server/discover needs `_meta` with `{META_PROTOCOL_VERSION}`"
             ))),
+            "subscriptions/listen" if revision.is_stateless() => server.listen(&params, reply),
+            // The method does not exist in the handshake revisions.
+            "subscriptions/listen" => reply.error(RpcError::method_not_found(method)),
             "tools/list" => match params.get("cursor") {
                 None | Some(Value::Null) => reply.result(list_result(revision)),
                 Some(_) => reply.error(RpcError::invalid_params(
@@ -603,6 +632,46 @@ impl Server {
                 "Invalid params: `{META_PROTOCOL_VERSION}` must be a string"
             ))),
         }
+    }
+
+    /// Open a subscription stream. The tool list never changes while the
+    /// server runs, so there is nothing to subscribe to: the stream is
+    /// acknowledged with an empty set and then stays quiet until the client
+    /// cancels it or the server stops.
+    fn listen(&self, params: &Map<String, Value>, reply: Reply) {
+        if !matches!(params.get("notifications"), None | Some(Value::Object(_))) {
+            return reply.error(RpcError::invalid_params(
+                "Invalid params: `notifications` must be an object",
+            ));
+        }
+        let key = reply.id.to_string();
+        // Only the reading thread adds entries to either table, so checking
+        // one and then locking the other cannot race.
+        let in_call = lock(&self.calls).contains_key(&key);
+        let mut subscriptions = lock(&self.subscriptions);
+        if in_call || subscriptions.contains_key(&key) {
+            drop(subscriptions);
+            return reply.error(RpcError::invalid_request(
+                "Invalid Request: a request with this id is still in progress",
+            ));
+        }
+        if subscriptions.len() >= MAX_SUBSCRIPTIONS {
+            drop(subscriptions);
+            return reply.error(RpcError::invalid_request(format!(
+                "Invalid Request: {MAX_SUBSCRIPTIONS} subscriptions are already open"
+            )));
+        }
+        // The acknowledgement is sent while the table is locked, so it is
+        // the first message for this subscription.
+        self.send(&json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/subscriptions/acknowledged",
+            "params": {
+                "_meta": {META_SUBSCRIPTION_ID: reply.id},
+                "notifications": {}
+            }
+        }));
+        subscriptions.insert(key, reply);
     }
 
     fn initialize(&self, params: &Map<String, Value>, reply: Reply) {
@@ -666,9 +735,10 @@ impl Server {
 
         let key = reply.id.to_string();
         let cancelled = Arc::new(AtomicBool::new(false));
+        let subscribed = lock(&server.subscriptions).contains_key(&key);
         {
             let mut calls = lock(&server.calls);
-            if calls.contains_key(&key) {
+            if subscribed || calls.contains_key(&key) {
                 drop(calls);
                 return reply.error(RpcError::invalid_request(
                     "Invalid Request: a request with this id is still in progress",
@@ -744,6 +814,13 @@ impl Server {
             self.idle.notify_all();
         }
     }
+}
+
+/// The response that ends a subscription gracefully.
+fn subscription_closed(id: &Value) -> Map<String, Value> {
+    let mut result = Map::new();
+    result.insert("_meta".into(), json!({META_SUBSCRIPTION_ID: id}));
+    result
 }
 
 fn discover_result() -> Map<String, Value> {

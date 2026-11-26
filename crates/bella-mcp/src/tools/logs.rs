@@ -159,7 +159,9 @@ pub(super) fn read(call: &Call<'_>, arguments: &Map<String, Value>) -> ToolResul
         Value::Array(
             entries
                 .iter()
-                .map(|entry| json!({"step": entry.step, "stream": entry.stream, "text": entry.text}))
+                .map(
+                    |entry| json!({"step": entry.step, "stream": entry.stream, "text": entry.text}),
+                )
                 .collect(),
         ),
     );
@@ -253,14 +255,25 @@ mod tests {
 
     #[test]
     fn clipping_keeps_the_start_or_the_end() {
-        let make = || vec![entry("a", "stdout", "0123456789"), entry("b", "stdout", "abcdefghij")];
+        let make = || {
+            vec![
+                entry("a", "stdout", "0123456789"),
+                entry("b", "stdout", "abcdefghij"),
+            ]
+        };
         let mut head = make();
         assert_eq!(clip(&mut head, 12, false), 8);
-        assert_eq!((head[0].text.as_str(), head[1].text.as_str()), ("0123456789", "ab"));
+        assert_eq!(
+            (head[0].text.as_str(), head[1].text.as_str()),
+            ("0123456789", "ab")
+        );
 
         let mut end = make();
         assert_eq!(clip(&mut end, 12, true), 8);
-        assert_eq!((end[0].text.as_str(), end[1].text.as_str()), ("89", "abcdefghij"));
+        assert_eq!(
+            (end[0].text.as_str(), end[1].text.as_str()),
+            ("89", "abcdefghij")
+        );
 
         let mut fits = make();
         assert_eq!(clip(&mut fits, 20, false), 0);

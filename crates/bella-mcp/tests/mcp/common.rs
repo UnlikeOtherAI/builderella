@@ -289,9 +289,7 @@ impl FakeFleet {
     }
 
     pub fn fail(&self, op: &'static str, code: ErrorCode, message: &str) {
-        self.state()
-            .errors
-            .insert(op, ApiError::new(code, message));
+        self.state().errors.insert(op, ApiError::new(code, message));
     }
 
     /// Make every call of `op` block until `release`.
@@ -520,7 +518,9 @@ impl FleetOps for FakeFleet {
             .ok_or_else(|| not_found("artifact"))?;
         let file = match &state.fetch_outside {
             Some(file) => file.clone(),
-            None => path.split('/').fold(dest.to_path_buf(), |dir, part| dir.join(part)),
+            None => path
+                .split('/')
+                .fold(dest.to_path_buf(), |dir, part| dir.join(part)),
         };
         drop(state);
         let io_error = |error: io::Error| ApiError::new(ErrorCode::Conflict, error.to_string());
@@ -700,9 +700,11 @@ impl Client {
                 };
                 for item in messages {
                     assert_eq!(item["jsonrpc"], "2.0", "not a JSON-RPC message: {text}");
+                    let is_notification = item.get("id").is_none() && item["method"].is_string();
+                    let is_response = item.get("result").is_some() != item.get("error").is_some();
                     assert!(
-                        item.get("result").is_some() != item.get("error").is_some(),
-                        "neither a result nor an error: {text}"
+                        is_notification != is_response,
+                        "neither a response nor a notification: {text}"
                     );
                 }
                 return Some(message);
@@ -724,8 +726,7 @@ impl Client {
         if !self.stash.is_empty() {
             return self.stash.remove(0);
         }
-        self.next_within(PATIENCE)
-            .expect("the server sent nothing")
+        self.next_within(PATIENCE).expect("the server sent nothing")
     }
 
     /// The response to request `id`; other messages are kept for later.
@@ -782,7 +783,10 @@ impl Client {
     /// reported an error. A protocol error fails the test.
     pub fn call(&mut self, tool: &str, arguments: Value) -> Value {
         let reply = self.request("tools/call", json!({"name": tool, "arguments": arguments}));
-        assert!(reply.get("error").is_none(), "protocol error from {tool}: {reply}");
+        assert!(
+            reply.get("error").is_none(),
+            "protocol error from {tool}: {reply}"
+        );
         let result = reply["result"].clone();
         assert!(result["isError"].is_boolean(), "{result}");
         assert_eq!(result["content"][0]["type"], "text", "{result}");
@@ -796,7 +800,9 @@ impl Client {
         assert_eq!(result["isError"], false, "{tool} failed: {}", text(&result));
         let schema = self.output_schema(tool);
         if let Err(problem) = check_schema(&schema, &result["structuredContent"], "result") {
-            panic!("{tool}: structured result does not match its outputSchema: {problem}\n{result}");
+            panic!(
+                "{tool}: structured result does not match its outputSchema: {problem}\n{result}"
+            );
         }
         result
     }
@@ -804,7 +810,10 @@ impl Client {
     /// Call a tool that must report an error, and return the error text.
     pub fn call_err(&mut self, tool: &str, arguments: Value) -> String {
         let result = self.call(tool, arguments);
-        assert_eq!(result["isError"], true, "{tool} should have failed: {result}");
+        assert_eq!(
+            result["isError"], true,
+            "{tool} should have failed: {result}"
+        );
         assert!(result.get("structuredContent").is_none(), "{result}");
         text(&result)
     }
@@ -836,7 +845,10 @@ impl Client {
         let server = self.server.take().unwrap();
         let started = Instant::now();
         while !server.is_finished() {
-            assert!(started.elapsed() < PATIENCE, "serve did not return after end of input");
+            assert!(
+                started.elapsed() < PATIENCE,
+                "serve did not return after end of input"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
         let result = server.join().expect("serve panicked");
@@ -850,7 +862,10 @@ impl Client {
 
 /// The text content of a tool result.
 pub fn text(result: &Value) -> String {
-    result["content"][0]["text"].as_str().unwrap_or_default().to_string()
+    result["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
 }
 
 pub fn structured(result: &Value) -> &Map<String, Value> {

@@ -191,7 +191,9 @@ fn command_spec(value: &Value) -> Result<CommandSpec, Failure> {
 
 fn check_command_text(what: &str, text: &str) -> Result<(), Failure> {
     if text.contains('\0') {
-        return Err(Failure::Invalid(format!("`{what}` contains a NUL character")));
+        return Err(Failure::Invalid(format!(
+            "`{what}` contains a NUL character"
+        )));
     }
     if text.len() > MAX_COMMAND_BYTES {
         return Err(Failure::Invalid(format!(
@@ -212,7 +214,8 @@ fn placement(arguments: &Map<String, Value>) -> Result<Option<PlacementChoice>, 
         (None, Some(machine)) => {
             if require.is_some() {
                 return Err(Failure::Invalid(
-                    "`require` applies to `platform` only; `machine` is always a hard choice".into(),
+                    "`require` applies to `platform` only; `machine` is always a hard choice"
+                        .into(),
                 ));
             }
             let machine = machine.trim();
@@ -347,10 +350,7 @@ pub(crate) fn memory_bytes(text: &str) -> Result<u64, String> {
     let bytes = value * factor;
     // 2^53 bytes is far beyond any machine and still exact as a float.
     if !bytes.is_finite() || bytes < 1.0 || bytes > 9_007_199_254_740_992.0 {
-        return Err(format!(
-            "`memory` `{}` is out of range",
-            inline(text, 32)
-        ));
+        return Err(format!("`memory` `{}` is out of range", inline(text, 32)));
     }
     Ok(bytes.round() as u64)
 }
@@ -366,7 +366,16 @@ mod tests {
         assert_eq!(memory_bytes("1.5g"), Ok(3 << 29));
         assert_eq!(memory_bytes("2GB"), Ok(2_000_000_000));
         assert_eq!(memory_bytes("4096"), Ok(4096));
-        for bad in ["", "GiB", "8 gigs", "-1GiB", "0", "1e3", "99999999TiB", "1.2.3G"] {
+        for bad in [
+            "",
+            "GiB",
+            "8 gigs",
+            "-1GiB",
+            "0",
+            "1e3",
+            "99999999TiB",
+            "1.2.3G",
+        ] {
             assert!(memory_bytes(bad).is_err(), "{bad}");
         }
     }

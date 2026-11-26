@@ -47,15 +47,24 @@ fn a_workspace_outside_the_roots_is_never_handed_to_the_fleet() {
                 tool,
                 json!({"recipe": "test", "workspace": path_text(workspace)}),
             );
-            assert!(error.contains("outside the directories this server was started for"), "{error}");
+            assert!(
+                error.contains("outside the directories this server was started for"),
+                "{error}"
+            );
             assert!(error.contains("do not try other paths"), "{error}");
         }
     }
     let missing = root.path().join("does-not-exist");
-    client.call_err("submit_job", json!({"recipe": "test", "workspace": path_text(&missing)}));
+    client.call_err(
+        "submit_job",
+        json!({"recipe": "test", "workspace": path_text(&missing)}),
+    );
     let file = root.path().join("file.txt");
     fs::write(&file, b"x").unwrap();
-    let error = client.call_err("submit_job", json!({"recipe": "test", "workspace": path_text(&file)}));
+    let error = client.call_err(
+        "submit_job",
+        json!({"recipe": "test", "workspace": path_text(&file)}),
+    );
     assert!(error.contains("is not a directory"), "{error}");
 
     assert!(fleet.calls().is_empty(), "{:?}", fleet.calls());
@@ -99,7 +108,10 @@ fn a_link_that_leads_outside_the_roots_is_rejected() {
     fs::create_dir(&real).unwrap();
     let alias = root.path().join("alias");
     link_dir(&real, &alias);
-    client.call_ok("submit_job", json!({"recipe": "test", "workspace": path_text(&alias)}));
+    client.call_ok(
+        "submit_job",
+        json!({"recipe": "test", "workspace": path_text(&alias)}),
+    );
     assert_eq!(
         fs::canonicalize(&fleet.submits()[0].workspace).unwrap(),
         fs::canonicalize(&real).unwrap()
@@ -134,14 +146,25 @@ fn every_root_is_usable_and_the_first_is_the_default() {
     let second = tempfile::tempdir().unwrap();
     let fleet = FakeFleet::new();
     let mut server_options = options(first.path());
-    server_options.allowed_roots.push(second.path().to_path_buf());
+    server_options
+        .allowed_roots
+        .push(second.path().to_path_buf());
     let mut client = Client::initialized(fleet.clone(), server_options, "2025-11-25");
 
     client.call_ok("submit_job", json!({"recipe": "a"}));
-    client.call_ok("submit_job", json!({"recipe": "a", "workspace": path_text(second.path())}));
+    client.call_ok(
+        "submit_job",
+        json!({"recipe": "a", "workspace": path_text(second.path())}),
+    );
     let submits = fleet.submits();
-    assert_eq!(fs::canonicalize(&submits[0].workspace).unwrap(), fs::canonicalize(first.path()).unwrap());
-    assert_eq!(fs::canonicalize(&submits[1].workspace).unwrap(), fs::canonicalize(second.path()).unwrap());
+    assert_eq!(
+        fs::canonicalize(&submits[0].workspace).unwrap(),
+        fs::canonicalize(first.path()).unwrap()
+    );
+    assert_eq!(
+        fs::canonicalize(&submits[1].workspace).unwrap(),
+        fs::canonicalize(second.path()).unwrap()
+    );
 }
 
 #[test]
@@ -152,7 +175,10 @@ fn without_a_usable_root_no_path_is_accepted() {
     let mut client = Client::initialized(fleet.clone(), options(&gone), "2025-11-25");
     let error = client.call_err("submit_job", json!({"recipe": "a"}));
     assert!(error.contains("without a usable directory"), "{error}");
-    let error = client.call_err("submit_job", json!({"recipe": "a", "workspace": path_text(elsewhere.path())}));
+    let error = client.call_err(
+        "submit_job",
+        json!({"recipe": "a", "workspace": path_text(elsewhere.path())}),
+    );
     assert!(error.contains("without a usable directory"), "{error}");
     assert!(fleet.calls().is_empty());
 }
@@ -178,12 +204,23 @@ fn a21_end_of_input_cancels_nothing() {
     let (served, rest) = client.close();
     assert!(served.is_ok(), "{served:?}");
     // It did not sit out the wait.
-    assert!(started.elapsed() < Duration::from_secs(4), "{:?}", started.elapsed());
-    assert!(rest.iter().all(|message| message.get("id") != Some(&pending)), "{rest:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(
+        rest.iter()
+            .all(|message| message.get("id") != Some(&pending)),
+        "{rest:?}"
+    );
 
     assert_eq!(fleet.count("cancel"), 0, "{:?}", fleet.calls());
     let after = fleet.job_now(&job);
-    assert_eq!(after, before, "the job submitted before the end of input was touched");
+    assert_eq!(
+        after, before,
+        "the job submitted before the end of input was touched"
+    );
     assert!(!after.cancel_requested);
     assert_eq!(after.phase, JobPhase::Queued);
 }
@@ -219,7 +256,10 @@ fn a21_repeated_wait_timeouts_cancel_nothing() {
     let job = fleet.add_job(job_view(&JobId::generate(), JobPhase::Executing));
     let mut client = Client::initialized(fleet.clone(), options(root.path()), "2025-11-25");
     for _ in 0..5 {
-        let result = client.call_ok("wait_job", json!({"job_id": job.as_str(), "timeout_seconds": 0}));
+        let result = client.call_ok(
+            "wait_job",
+            json!({"job_id": job.as_str(), "timeout_seconds": 0}),
+        );
         assert_eq!(structured(&result)["timed_out"], true);
     }
     assert_eq!(fleet.count("cancel"), 0);
@@ -263,7 +303,10 @@ fn a_cancelled_notification_stops_the_pending_wait_and_only_that() {
         }
         // Still stopping: the id is reported as in progress, never answered.
         assert_eq!(reply["error"]["code"], -32600, "{reply}");
-        assert!(Instant::now() < deadline, "the cancelled wait never stopped");
+        assert!(
+            Instant::now() < deadline,
+            "the cancelled wait never stopped"
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
 
@@ -294,7 +337,12 @@ fn cancelling_a_call_that_cannot_be_cancelled_still_gets_its_answer() {
 
     let reply = client.response(&submitting);
     assert_eq!(reply["result"]["isError"], false, "{reply}");
-    let job = JobId::parse(reply["result"]["structuredContent"]["job_id"].as_str().unwrap()).unwrap();
+    let job = JobId::parse(
+        reply["result"]["structuredContent"]["job_id"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(fleet.job_now(&job).phase, JobPhase::Queued);
     assert_eq!(fleet.count("cancel"), 0);
 }
@@ -309,8 +357,14 @@ fn a_long_wait_does_not_block_other_calls() {
     let other = fleet.add_job(job_view(&JobId::generate(), JobPhase::Queued));
     let mut client = Client::initialized(fleet.clone(), options(root.path()), "2025-11-25");
 
-    let first = client.begin_call("wait_job", json!({"job_id": slow.as_str(), "timeout_seconds": 50}));
-    let second = client.begin_call("wait_job", json!({"job_id": other.as_str(), "timeout_seconds": 50}));
+    let first = client.begin_call(
+        "wait_job",
+        json!({"job_id": slow.as_str(), "timeout_seconds": 50}),
+    );
+    let second = client.begin_call(
+        "wait_job",
+        json!({"job_id": other.as_str(), "timeout_seconds": 50}),
+    );
     fleet.wait_until_waiting(2);
 
     // Both waits are parked in the fleet; these are answered meanwhile.
@@ -324,11 +378,17 @@ fn a_long_wait_does_not_block_other_calls() {
     // The waits finish independently, in the order the jobs do.
     fleet.finish_job(&other, Outcome::Cancelled);
     let reply = client.response(&second);
-    assert_eq!(reply["result"]["structuredContent"]["outcome"]["type"], "cancelled");
+    assert_eq!(
+        reply["result"]["structuredContent"]["outcome"]["type"],
+        "cancelled"
+    );
     assert!(client.next_within(Duration::from_millis(50)).is_none());
     fleet.finish_job(&slow, Outcome::Succeeded);
     let reply = client.response(&first);
-    assert_eq!(reply["result"]["structuredContent"]["outcome"]["type"], "succeeded");
+    assert_eq!(
+        reply["result"]["structuredContent"]["outcome"]["type"],
+        "succeeded"
+    );
     assert_eq!(reply["result"]["structuredContent"]["timed_out"], false);
 }
 
@@ -339,12 +399,20 @@ fn too_many_concurrent_calls_are_refused_not_queued() {
     let job = fleet.add_job(job_view(&JobId::generate(), JobPhase::Executing));
     let mut client = Client::initialized(fleet.clone(), options(root.path()), "2025-11-25");
     let waits: Vec<Value> = (0..32)
-        .map(|_| client.begin_call("wait_job", json!({"job_id": job.as_str(), "timeout_seconds": 50})))
+        .map(|_| {
+            client.begin_call(
+                "wait_job",
+                json!({"job_id": job.as_str(), "timeout_seconds": 50}),
+            )
+        })
         .collect();
     fleet.wait_until_waiting(32);
     let error = client.call_err("get_job", json!({"job_id": job.as_str()}));
     assert!(error.contains("was not started"), "{error}");
-    assert!(error.contains("32 tool calls are already running"), "{error}");
+    assert!(
+        error.contains("32 tool calls are already running"),
+        "{error}"
+    );
     // Everything else still works, and the waits complete normally.
     assert_eq!(client.request("ping", json!({}))["result"], json!({}));
     fleet.finish_job(&job, Outcome::Succeeded);
@@ -364,13 +432,25 @@ fn a61_there_is_no_tool_for_policy_budgets_or_enrollment() {
     let mut client = Client::initialized(FakeFleet::new(), options(root.path()), "2025-11-25");
     let listed = client.request("tools/list", json!({}));
     let tools = listed["result"]["tools"].as_array().unwrap();
-    let names: Vec<&str> = tools.iter().map(|tool| tool["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
     assert_eq!(
         names,
         [
-            "plan_job", "submit_job", "get_job", "wait_job", "read_logs", "cancel_job",
-            "get_artifacts", "get_environment", "renew_environment", "finish_environment",
-            "explain_queue", "list_fleet",
+            "plan_job",
+            "submit_job",
+            "get_job",
+            "wait_job",
+            "read_logs",
+            "cancel_job",
+            "get_artifacts",
+            "get_environment",
+            "renew_environment",
+            "finish_environment",
+            "explain_queue",
+            "list_fleet",
         ]
     );
     assert_eq!(names, TOOL_NAMES);
@@ -378,13 +458,36 @@ fn a61_there_is_no_tool_for_policy_budgets_or_enrollment() {
 
     // No tool takes an argument that could carry such a change either.
     for tool in tools {
-        for argument in tool["inputSchema"]["properties"].as_object().unwrap().keys() {
-            for forbidden in ["policy", "budget", "allowance", "enroll", "pairing", "token", "reserve", "role"] {
-                assert!(!argument.contains(forbidden), "{}: `{argument}`", tool["name"]);
+        for argument in tool["inputSchema"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+        {
+            for forbidden in [
+                "policy",
+                "budget",
+                "allowance",
+                "enroll",
+                "pairing",
+                "token",
+                "reserve",
+                "role",
+            ] {
+                assert!(
+                    !argument.contains(forbidden),
+                    "{}: `{argument}`",
+                    tool["name"]
+                );
             }
         }
     }
-    for name in ["update_machine", "set_project_policy", "raise_cloud_budget", "enroll_machine", "create_token"] {
+    for name in [
+        "update_machine",
+        "set_project_policy",
+        "raise_cloud_budget",
+        "enroll_machine",
+        "create_token",
+    ] {
         let reply = client.request("tools/call", json!({"name": name, "arguments": {}}));
         assert_eq!(reply["error"]["code"], -32602, "{name}: {reply}");
     }
@@ -401,23 +504,57 @@ fn a61_policy_denials_are_clear_tool_errors() {
     let mut client = Client::initialized(fleet.clone(), options(root.path()), "2025-11-25");
 
     let calls = [
-        ("submit", "submit_job", json!({"recipe": "test", "priority": "urgent"})),
-        ("plan", "plan_job", json!({"recipe": "test", "machine": "workstation"})),
+        (
+            "submit",
+            "submit_job",
+            json!({"recipe": "test", "priority": "urgent"}),
+        ),
+        (
+            "plan",
+            "plan_job",
+            json!({"recipe": "test", "machine": "workstation"}),
+        ),
         ("cancel", "cancel_job", json!({"job_id": job.as_str()})),
         ("job", "get_job", json!({"job_id": job.as_str()})),
-        ("renew_environment", "renew_environment", json!({"environment_id": environment})),
-        ("finish_environment", "finish_environment", json!({"environment_id": environment})),
+        (
+            "renew_environment",
+            "renew_environment",
+            json!({"environment_id": environment}),
+        ),
+        (
+            "finish_environment",
+            "finish_environment",
+            json!({"environment_id": environment}),
+        ),
         ("fleet", "list_fleet", json!({})),
     ];
-    for (code, name) in [(ErrorCode::PolicyDenied, "policy_denied"), (ErrorCode::Forbidden, "forbidden")] {
+    for (code, name) in [
+        (ErrorCode::PolicyDenied, "policy_denied"),
+        (ErrorCode::Forbidden, "forbidden"),
+    ] {
         for (op, tool, arguments) in &calls {
-            fleet.fail(op, code, "project policy does not allow this for developer tokens");
+            fleet.fail(
+                op,
+                code,
+                "project policy does not allow this for developer tokens",
+            );
             // `call_err` insists on a result with isError, not a protocol error.
             let error = client.call_err(tool, arguments.clone());
-            assert!(error.starts_with(&format!("{tool} failed ({name}): project policy does not allow this")), "{error}");
-            assert!(error.contains("You do not have the authority for this"), "{error}");
+            assert!(
+                error.starts_with(&format!(
+                    "{tool} failed ({name}): project policy does not allow this"
+                )),
+                "{error}"
+            );
+            assert!(
+                error.contains("You do not have the authority for this"),
+                "{error}"
+            );
             assert!(error.contains("no tool that changes machine policy, project policy, cloud budgets or enrollment"), "{error}");
-            assert!(error.contains("Do not retry with different arguments"), "{error}");
+            assert!(
+                error.contains("Do not retry with different arguments"),
+                "{error}"
+            );
             assert!(error.contains("tell the user what was refused"), "{error}");
         }
     }
@@ -443,7 +580,10 @@ fn results_stay_bounded_whatever_the_fleet_returns() {
     fleet.set_fleet(fleet_overview(machines));
     let result = client.call_ok("list_fleet", json!({}));
     assert_eq!(structured(&result)["machine_count"], 500);
-    assert_eq!(structured(&result)["machines"].as_array().unwrap().len(), 40);
+    assert_eq!(
+        structured(&result)["machines"].as_array().unwrap().len(),
+        40
+    );
     assert_eq!(structured(&result)["machines_omitted"], 460);
     assert!(text(&result).contains("(460 more machine(s) not shown)"));
     assert!(line_len(&result) < 100_000, "{}", line_len(&result));
@@ -451,11 +591,17 @@ fn results_stay_bounded_whatever_the_fleet_returns() {
     // 1000 artifacts with enormous paths.
     let job = fleet.add_job(job_view(&JobId::generate(), JobPhase::Finished));
     for index in 0..1000 {
-        fleet.add_artifact(artifact_view(&job, &format!("{index}/{long}"), b"x", ATTEMPT_1), b"x");
+        fleet.add_artifact(
+            artifact_view(&job, &format!("{index}/{long}"), b"x", ATTEMPT_1),
+            b"x",
+        );
     }
     let result = client.call_ok("get_artifacts", json!({"job_id": job.as_str()}));
     assert_eq!(structured(&result)["total"], 1000);
-    assert_eq!(structured(&result)["artifacts"].as_array().unwrap().len(), 100);
+    assert_eq!(
+        structured(&result)["artifacts"].as_array().unwrap().len(),
+        100
+    );
     assert_eq!(structured(&result)["omitted"], 900);
     assert!(line_len(&result) < 150_000, "{}", line_len(&result));
     // Downloading that many at once is refused.
@@ -485,10 +631,25 @@ fn results_stay_bounded_whatever_the_fleet_returns() {
         suggestions: vec![long.clone(); 500],
     });
     let result = client.call_ok("explain_queue", json!({"job_id": job.as_str()}));
-    assert_eq!(structured(&result)["hard_blockers"].as_array().unwrap().len(), 20);
-    assert_eq!(structured(&result)["temporary_blockers"].as_array().unwrap().len(), 20);
+    assert_eq!(
+        structured(&result)["hard_blockers"]
+            .as_array()
+            .unwrap()
+            .len(),
+        20
+    );
+    assert_eq!(
+        structured(&result)["temporary_blockers"]
+            .as_array()
+            .unwrap()
+            .len(),
+        20
+    );
     assert_eq!(structured(&result)["blockers_omitted"], 460);
-    assert_eq!(structured(&result)["suggestions"].as_array().unwrap().len(), 10);
+    assert_eq!(
+        structured(&result)["suggestions"].as_array().unwrap().len(),
+        10
+    );
     assert!(line_len(&result) < 100_000, "{}", line_len(&result));
 
     // 500 placements.
@@ -505,7 +666,10 @@ fn results_stay_bounded_whatever_the_fleet_returns() {
         issues: vec![long.clone(); 500],
     });
     let result = client.call_ok("plan_job", json!({"recipe": "test"}));
-    assert_eq!(structured(&result)["placements"].as_array().unwrap().len(), 25);
+    assert_eq!(
+        structured(&result)["placements"].as_array().unwrap().len(),
+        25
+    );
     assert_eq!(structured(&result)["placements_omitted"], 475);
     assert_eq!(structured(&result)["issues"].as_array().unwrap().len(), 10);
     assert!(line_len(&result) < 50_000, "{}", line_len(&result));
@@ -518,9 +682,18 @@ fn results_stay_bounded_whatever_the_fleet_returns() {
     // Secret paths and warnings on submission.
     fleet.set_submit_extras(vec![long.clone(); 500], vec![long.clone(); 500]);
     let result = client.call_ok("submit_job", json!({"recipe": "test"}));
-    assert_eq!(structured(&result)["excluded_secrets"].as_array().unwrap().len(), 50);
+    assert_eq!(
+        structured(&result)["excluded_secrets"]
+            .as_array()
+            .unwrap()
+            .len(),
+        50
+    );
     assert_eq!(structured(&result)["excluded_secrets_omitted"], 450);
-    assert_eq!(structured(&result)["warnings"].as_array().unwrap().len(), 10);
+    assert_eq!(
+        structured(&result)["warnings"].as_array().unwrap().len(),
+        10
+    );
     assert!(line_len(&result) < 50_000, "{}", line_len(&result));
 }
 
@@ -539,7 +712,11 @@ fn log_pages_are_bounded_by_max_log_bytes() {
     let page = |streams: Vec<(LogStream, String)>| LogPage {
         entries: streams
             .into_iter()
-            .map(|(stream, text)| LogEntry { step: "build".into(), stream, text })
+            .map(|(stream, text)| LogEntry {
+                step: "build".into(),
+                stream,
+                text,
+            })
             .collect(),
         next_cursor: "next".into(),
         truncated: false,
@@ -551,7 +728,12 @@ fn log_pages_are_bounded_by_max_log_bytes() {
     let data = structured(&head);
     assert_eq!(data["bytes"], 4096);
     assert_eq!(data["omitted_bytes"], body.len() - 4096);
-    let kept: String = data["entries"].as_array().unwrap().iter().map(|e| e["text"].as_str().unwrap()).collect();
+    let kept: String = data["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["text"].as_str().unwrap())
+        .collect();
     assert_eq!(kept.len(), 4096);
     assert!(kept.starts_with("FIRST\n") && !kept.contains("LAST"));
     assert!(text(&head).contains("did not fit and were left out"));
@@ -560,7 +742,12 @@ fn log_pages_are_bounded_by_max_log_bytes() {
 
     // Reading the tail keeps the end instead.
     let tail = client.call_ok("read_logs", json!({"job_id": job.as_str(), "tail": true}));
-    let kept: String = structured(&tail)["entries"].as_array().unwrap().iter().map(|e| e["text"].as_str().unwrap()).collect();
+    let kept: String = structured(&tail)["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["text"].as_str().unwrap())
+        .collect();
     assert!(kept.ends_with("LAST\n") && !kept.contains("FIRST"));
     assert_eq!(kept.len(), 4096);
 
@@ -568,7 +755,11 @@ fn log_pages_are_bounded_by_max_log_bytes() {
     // per-entry overhead.
     let streams = (0..20_000)
         .map(|index| {
-            let stream = if index % 2 == 0 { LogStream::Stdout } else { LogStream::Stderr };
+            let stream = if index % 2 == 0 {
+                LogStream::Stdout
+            } else {
+                LogStream::Stderr
+            };
             (stream, "z".to_string())
         })
         .collect();
@@ -618,7 +809,10 @@ fn control_characters_from_the_fleet_never_reach_the_agent() {
         let whole = reply.to_string();
         // Serialised JSON shows any control character as a \u00XX escape.
         assert!(!whole.contains("\\u00"), "{whole}");
-        assert!(!whole.contains("\\r") && !whole.contains('\u{202e}'), "{whole}");
+        assert!(
+            !whole.contains("\\r") && !whole.contains('\u{202e}'),
+            "{whole}"
+        );
     }
     assert_eq!(
         structured(&replies[0])["machines"][0]["name"],
@@ -628,7 +822,21 @@ fn control_characters_from_the_fleet_never_reach_the_agent() {
     // A name cannot break out of its line to forge another field.
     let job_text = text(&replies[1]);
     assert_eq!(structured(&replies[1])["recipe"], "test phase: finished");
-    assert_eq!(job_text.lines().filter(|line| line.starts_with("phase: ")).count(), 1, "{job_text}");
-    assert!(job_text.lines().all(|line| !line.starts_with("note: ")), "{job_text}");
-    assert!(text(&replies[2]).contains("no job here"), "{}", text(&replies[2]));
+    assert_eq!(
+        job_text
+            .lines()
+            .filter(|line| line.starts_with("phase: "))
+            .count(),
+        1,
+        "{job_text}"
+    );
+    assert!(
+        job_text.lines().all(|line| !line.starts_with("note: ")),
+        "{job_text}"
+    );
+    assert!(
+        text(&replies[2]).contains("no job here"),
+        "{}",
+        text(&replies[2])
+    );
 }

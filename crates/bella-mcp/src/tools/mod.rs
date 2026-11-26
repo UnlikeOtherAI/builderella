@@ -328,7 +328,9 @@ impl Tool {
                 "Invalid arguments for {}: {reason}. Nothing was done; correct the arguments and call again.",
                 self.name
             )),
-            Err(Failure::Other(reason)) => Finished::Error(format!("{} failed: {reason}", self.name)),
+            Err(Failure::Other(reason)) => {
+                Finished::Error(format!("{} failed: {reason}", self.name))
+            }
             Err(Failure::Api { error, note }) => {
                 let mut text = explain_api_error(self.name, &error);
                 if let Some(note) = note {
@@ -489,7 +491,9 @@ mod tests {
                         }
                     }
                     "items" => walk(value, &format!("{at}[]")),
-                    "additionalProperties" if value.is_object() => walk(value, &format!("{at}{{}}")),
+                    "additionalProperties" if value.is_object() => {
+                        walk(value, &format!("{at}{{}}"))
+                    }
                     _ => {}
                 }
             }
@@ -531,7 +535,10 @@ mod tests {
         let newer = tool.descriptor(Revision::V2025_06_18);
         assert_eq!(newer["outputSchema"]["type"], "object");
         assert_eq!(newer["annotations"]["readOnlyHint"], false);
-        assert_eq!(find("list_fleet").unwrap().output_schema()["type"], "object");
+        assert_eq!(
+            find("list_fleet").unwrap().output_schema()["type"],
+            "object"
+        );
     }
 
     #[test]
@@ -539,7 +546,12 @@ mod tests {
         let submit = find("submit_job").unwrap().description;
         assert!(submit.contains("instead of on this machine"));
         assert!(submit.contains("do not fall back to an unbounded local build"));
-        assert!(find("wait_job").unwrap().description.contains("cancels nothing"));
+        assert!(
+            find("wait_job")
+                .unwrap()
+                .description
+                .contains("cancels nothing")
+        );
         assert!(find("read_logs").unwrap().description.contains("untrusted"));
         assert!(INSTRUCTIONS.contains("instead of running it on this machine"));
         assert!(INSTRUCTIONS.contains("Do not fall back to an unbounded local build"));
@@ -549,12 +561,16 @@ mod tests {
     #[test]
     fn policy_denials_tell_the_agent_to_stop() {
         for code in [ErrorCode::PolicyDenied, ErrorCode::Forbidden] {
-            let text = explain_api_error("submit_job", &ApiError::new(code, "urgent is not allowed"));
+            let text =
+                explain_api_error("submit_job", &ApiError::new(code, "urgent is not allowed"));
             assert!(text.contains("urgent is not allowed"));
             assert!(text.contains("do not have the authority"));
             assert!(text.contains("Do not retry with different arguments"));
         }
-        let infra = explain_api_error("get_job", &ApiError::new(ErrorCode::Unavailable, "reconciling"));
+        let infra = explain_api_error(
+            "get_job",
+            &ApiError::new(ErrorCode::Unavailable, "reconciling"),
+        );
         assert!(infra.contains("infrastructure problem"));
         assert!(infra.contains("do not fall back"));
     }

@@ -482,7 +482,12 @@ fn add_detail(job: &JobView, fields: &mut Map<String, Value>, lines: &mut Vec<St
 fn outcome_type(outcome: &bella_core::job::Outcome) -> String {
     serde_json::to_value(outcome)
         .ok()
-        .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_string))
+        .and_then(|value| {
+            value
+                .get("type")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| "unknown".into())
 }
 

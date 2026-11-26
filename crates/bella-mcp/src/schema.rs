@@ -85,10 +85,7 @@ fn check(schema: &Value, instance: &Value, path: &str) -> Result<(), String> {
             if let Some(max) = schema.get("maxProperties").and_then(Value::as_u64)
                 && map.len() as u64 > max
             {
-                return Err(format!(
-                    "{} has more than {max} entries",
-                    subject(path)
-                ));
+                return Err(format!("{} has more than {max} entries", subject(path)));
             }
             let properties = schema.get("properties").and_then(Value::as_object);
             let additional = schema.get("additionalProperties");
@@ -110,18 +107,12 @@ fn check(schema: &Value, instance: &Value, path: &str) -> Result<(), String> {
             if let Some(min) = schema.get("minItems").and_then(Value::as_u64)
                 && (items.len() as u64) < min
             {
-                return Err(format!(
-                    "{} needs at least {min} item(s)",
-                    subject(path)
-                ));
+                return Err(format!("{} needs at least {min} item(s)", subject(path)));
             }
             if let Some(max) = schema.get("maxItems").and_then(Value::as_u64)
                 && items.len() as u64 > max
             {
-                return Err(format!(
-                    "{} has more than {max} items",
-                    subject(path)
-                ));
+                return Err(format!("{} has more than {max} items", subject(path)));
             }
             if let Some(sub) = schema.get("items") {
                 for (index, item) in items.iter().enumerate() {
@@ -254,8 +245,14 @@ mod tests {
     fn accepts_conforming_values() {
         let ok = json!({"id": "x", "count": 3, "mode": "b", "cmd": ["a", "b"], "env": {"K": "v"}, "ratio": 0.5});
         assert_eq!(validate(&schema(), &ok), Ok(()));
-        assert_eq!(validate(&schema(), &json!({"id": "x", "cmd": "sh"})), Ok(()));
-        assert_eq!(validate(&schema(), &json!({"id": "x", "count": 2.0})), Ok(()));
+        assert_eq!(
+            validate(&schema(), &json!({"id": "x", "cmd": "sh"})),
+            Ok(())
+        );
+        assert_eq!(
+            validate(&schema(), &json!({"id": "x", "count": 2.0})),
+            Ok(())
+        );
     }
 
     #[test]
@@ -265,18 +262,54 @@ mod tests {
             (json!({"id": "x", "extra": 1}), "unknown argument `extra`"),
             (json!({"id": 1}), "`id` must be a string, got a number"),
             (json!({"id": ""}), "`id` must not be empty"),
-            (json!({"id": "123456789"}), "`id` must be at most 8 characters"),
-            (json!({"id": "x", "count": 1.5}), "`count` must be an integer, got a number"),
-            (json!({"id": "x", "count": -1}), "`count` must be at least 0"),
-            (json!({"id": "x", "count": 11}), "`count` must be at most 10"),
-            (json!({"id": "x", "mode": "c"}), "`mode` must be one of \"a\", \"b\""),
-            (json!({"id": "x", "cmd": 5}), "`cmd` must be a string or an array, got a number"),
-            (json!({"id": "x", "cmd": []}), "`cmd` needs at least 1 item(s)"),
-            (json!({"id": "x", "cmd": ["a", "b", "c"]}), "`cmd` has more than 2 items"),
-            (json!({"id": "x", "cmd": ["a", 2]}), "`cmd[1]` must be a string, got a number"),
-            (json!({"id": "x", "env": {"K": 1}}), "`env.K` must be a string, got a number"),
-            (json!({"id": "x", "env": {"A": "1", "B": "2"}}), "`env` has more than 1 entries"),
-            (json!({"id": "x", "ratio": 0.25}), "`ratio` must be at least 0.5"),
+            (
+                json!({"id": "123456789"}),
+                "`id` must be at most 8 characters",
+            ),
+            (
+                json!({"id": "x", "count": 1.5}),
+                "`count` must be an integer, got a number",
+            ),
+            (
+                json!({"id": "x", "count": -1}),
+                "`count` must be at least 0",
+            ),
+            (
+                json!({"id": "x", "count": 11}),
+                "`count` must be at most 10",
+            ),
+            (
+                json!({"id": "x", "mode": "c"}),
+                "`mode` must be one of \"a\", \"b\"",
+            ),
+            (
+                json!({"id": "x", "cmd": 5}),
+                "`cmd` must be a string or an array, got a number",
+            ),
+            (
+                json!({"id": "x", "cmd": []}),
+                "`cmd` needs at least 1 item(s)",
+            ),
+            (
+                json!({"id": "x", "cmd": ["a", "b", "c"]}),
+                "`cmd` has more than 2 items",
+            ),
+            (
+                json!({"id": "x", "cmd": ["a", 2]}),
+                "`cmd[1]` must be a string, got a number",
+            ),
+            (
+                json!({"id": "x", "env": {"K": 1}}),
+                "`env.K` must be a string, got a number",
+            ),
+            (
+                json!({"id": "x", "env": {"A": "1", "B": "2"}}),
+                "`env` has more than 1 entries",
+            ),
+            (
+                json!({"id": "x", "ratio": 0.25}),
+                "`ratio` must be at least 0.5",
+            ),
             (json!([]), "the arguments must be an object, got an array"),
         ];
         for (instance, expected) in cases {

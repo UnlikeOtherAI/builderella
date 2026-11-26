@@ -119,7 +119,8 @@ pub(super) fn get(call: &Call<'_>, arguments: &Map<String, Value>) -> ToolResult
     }
     if download && dest.is_none() {
         return Err(Failure::Invalid(
-            "`download: true` needs `dest`, the directory to write into; there is no default".into(),
+            "`download: true` needs `dest`, the directory to write into; there is no default"
+                .into(),
         ));
     }
 

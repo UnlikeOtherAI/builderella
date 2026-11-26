@@ -139,8 +139,16 @@ fn machine(view: &MachineView) -> (Value, String) {
         "- {label} [{platform} {}] {}{}, {}; cpu free {:.1} of {:.1} ({:.1} reserved); memory free {} of {} ({} reserved); enforcement cpu={} memory={} tree={}{}; flags: {}; active attempts: {}",
         name(&view.inventory.os.os_version),
         tag(&view.lifecycle),
-        if view.connected { ", connected" } else { ", NOT connected" },
-        if view.policy.accept_builds { "accepts builds" } else { "does not accept builds" },
+        if view.connected {
+            ", connected"
+        } else {
+            ", NOT connected"
+        },
+        if view.policy.accept_builds {
+            "accepts builds"
+        } else {
+            "does not accept builds"
+        },
         cpus(free.cpu_milli),
         cpus(view.managed_ceiling.cpu_milli),
         cpus(view.reserved.cpu_milli),
@@ -150,8 +158,16 @@ fn machine(view: &MachineView) -> (Value, String) {
         tag(&enforcement.cpu),
         tag(&enforcement.memory),
         tag(&enforcement.process_tree),
-        if enforcement.verified { " (verified)" } else { " (not verified)" },
-        if flags.is_empty() { "none".to_string() } else { flags.join(", ") },
+        if enforcement.verified {
+            " (verified)"
+        } else {
+            " (not verified)"
+        },
+        if flags.is_empty() {
+            "none".to_string()
+        } else {
+            flags.join(", ")
+        },
         view.attempts.len(),
     );
     (Value::Object(entry), line)
