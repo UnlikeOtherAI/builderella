@@ -26,7 +26,8 @@ function limitSentence(status: LeaseStatus): string {
   }
 }
 
-function Countdown({ environment, now }: { environment: EnvironmentView; now: number }) {
+/** How long a live environment has left, and which limit ends it. */
+export function Countdown({ environment, now }: { environment: EnvironmentView; now: number }) {
   if (!LIVE_STATES.has(environment.state)) {
     return <span className="muted">not counting: the environment is {environment.state}</span>;
   }

@@ -1,4 +1,5 @@
-import { Link } from 'react-router';
+import { useEffect } from 'react';
+import { Link, useParams } from 'react-router';
 import { useFleet, useNow } from '../api/hooks';
 import type { FleetOverview, MachineView } from '../api/schemas';
 import { CapacityBar } from '../components/CapacityBar';
@@ -34,6 +35,14 @@ export function FleetView() {
 
 function FleetBody({ fleet }: { fleet: FleetOverview }) {
   const now = useNow(5000);
+  const { machine: selected } = useParams();
+  // A link to one machine brings its card into view and gives it focus.
+  useEffect(() => {
+    if (!selected) return;
+    const card = document.getElementById(selected);
+    card?.scrollIntoView?.({ block: 'start' });
+    card?.focus({ preventScroll: true });
+  }, [selected]);
   return (
     <>
       <p className="summary">
@@ -55,7 +64,12 @@ function FleetBody({ fleet }: { fleet: FleetOverview }) {
       ) : (
         <div className="machines">
           {fleet.machines.map((machine) => (
-            <MachineCard key={machine.id} machine={machine} now={now} />
+            <MachineCard
+              key={machine.id}
+              machine={machine}
+              now={now}
+              selected={machine.id === selected}
+            />
           ))}
         </div>
       )}
@@ -63,7 +77,15 @@ function FleetBody({ fleet }: { fleet: FleetOverview }) {
   );
 }
 
-function MachineCard({ machine, now }: { machine: MachineView; now: number }) {
+function MachineCard({
+  machine,
+  now,
+  selected,
+}: {
+  machine: MachineView;
+  now: number;
+  selected: boolean;
+}) {
   const { hardware, os } = machine.inventory;
   const telemetry = machine.telemetry ?? null;
   const capacity = machineCapacity(machine);
@@ -77,7 +99,12 @@ function MachineCard({ machine, now }: { machine: MachineView; now: number }) {
   const sampleAge = telemetry ? Math.max(now - telemetry.sampled_at, 0) : null;
 
   return (
-    <article className="card machine" id={machine.id} aria-labelledby={`${machine.id}-name`}>
+    <article
+      className={selected ? 'card machine machine-selected' : 'card machine'}
+      id={machine.id}
+      tabIndex={-1}
+      aria-labelledby={`${machine.id}-name`}
+    >
       <header className="machine-head">
         <h2 id={`${machine.id}-name`}>{machine.name}</h2>
         <p className="muted">
