@@ -87,11 +87,14 @@ impl ServerOptions {
 
 /// Serve MCP over `input` and `output` until the input ends.
 ///
-/// Returns `Ok(())` at end of input and the error when reading fails.
-/// Before returning it gives calls that are still running a few seconds to
-/// reply, then closes the output; later replies are dropped. It never
-/// cancels a job: jobs submitted through this server keep running after it
-/// returns.
+/// Pass a buffered standard input (`BufReader::new(std::io::stdin())`; a
+/// locked handle is not `Send`) and `std::io::stdout()`.
+///
+/// Returns `Ok(())` at end of input and the error when reading fails. End of
+/// input means the client is gone: pending `wait_job` calls stop without a
+/// reply, other calls that are already running get a few seconds to answer,
+/// then the output is closed and later replies are dropped. The server never
+/// cancels a job: jobs submitted through it keep running after it returns.
 pub fn serve(
     mut input: impl BufRead + Send,
     output: impl Write + Send + 'static,
