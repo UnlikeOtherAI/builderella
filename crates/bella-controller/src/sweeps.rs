@@ -379,7 +379,8 @@ pub(crate) async fn collect_garbage(app: &App) -> Result<GcReport, Failure> {
                 let manifest = get_bytes(app.store.as_ref(), &manifest_digest)
                     .map_err(|error| error.to_string())
                     .and_then(|bytes| {
-                        serde_json::from_slice::<Manifest>(&bytes).map_err(|error| error.to_string())
+                        serde_json::from_slice::<Manifest>(&bytes)
+                            .map_err(|error| error.to_string())
                     });
                 match manifest {
                     Ok(manifest) => live.extend(manifest.digests()),

@@ -147,7 +147,10 @@ mod tests {
 
     #[test]
     fn only_plain_relative_names_can_be_assets() {
-        assert_eq!(asset_name("/assets/index-Ab3_x.js"), Some("assets/index-Ab3_x.js"));
+        assert_eq!(
+            asset_name("/assets/index-Ab3_x.js"),
+            Some("assets/index-Ab3_x.js")
+        );
         assert_eq!(asset_name("/favicon.svg"), Some("favicon.svg"));
         for hostile in [
             "/../etc/passwd",
@@ -168,7 +171,10 @@ mod tests {
 
     #[test]
     fn content_types_by_extension() {
-        assert_eq!(content_type("assets/a.js"), "text/javascript; charset=utf-8");
+        assert_eq!(
+            content_type("assets/a.js"),
+            "text/javascript; charset=utf-8"
+        );
         assert_eq!(content_type("assets/a.CSS"), "text/css; charset=utf-8");
         assert_eq!(content_type("index.html"), "text/html; charset=utf-8");
         assert_eq!(content_type("blob"), "application/octet-stream");

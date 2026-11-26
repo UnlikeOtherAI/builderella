@@ -158,10 +158,7 @@ pub(crate) fn router(app: App) -> Router {
         .route("/enroll/pairing-codes", post(identity::create_pairing_code))
         .route("/enroll", post(identity::enroll))
         .route("/worker/ws", get(worker::upgrade))
-        .route(
-            "/objects/missing",
-            post(objects::missing).layer(large),
-        )
+        .route("/objects/missing", post(objects::missing).layer(large))
         .route(
             "/objects/{digest}",
             put(objects::upload)

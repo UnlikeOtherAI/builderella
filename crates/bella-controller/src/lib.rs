@@ -223,8 +223,8 @@ fn public_url(
     let invalid = |error: &dyn std::fmt::Display| ControllerError::PublicUrl(error.to_string());
     let tls = matches!(config.tls, Tls::SelfSigned { .. });
     if let Some(text) = &config.public_url {
-        let url = ControllerUrl::parse(text, config.allow_insecure)
-            .map_err(|error| invalid(&error))?;
+        let url =
+            ControllerUrl::parse(text, config.allow_insecure).map_err(|error| invalid(&error))?;
         if url.is_tls() != tls {
             return Err(ControllerError::PublicUrl(format!(
                 "`{text}` does not match the listener, which serves {}",
@@ -307,7 +307,9 @@ impl Controller {
     /// bound. The ledger's epoch is bumped as soon as it is opened, which
     /// fences off any controller still running on the same directory.
     pub async fn start(config: ControllerConfig) -> Result<ControllerHandle, ControllerError> {
-        if config.tls == Tls::Disabled && !config.listen.ip().is_loopback() && !config.allow_insecure
+        if config.tls == Tls::Disabled
+            && !config.listen.ip().is_loopback()
+            && !config.allow_insecure
         {
             return Err(ControllerError::InsecureListen(config.listen));
         }
@@ -331,12 +333,13 @@ impl Controller {
             None => (None, None),
         };
 
-        let listener = TcpListener::bind(config.listen)
-            .await
-            .map_err(|source| ControllerError::Bind {
-                addr: config.listen,
-                source,
-            })?;
+        let listener =
+            TcpListener::bind(config.listen)
+                .await
+                .map_err(|source| ControllerError::Bind {
+                    addr: config.listen,
+                    source,
+                })?;
         let local_addr = listener
             .local_addr()
             .map_err(|source| ControllerError::Bind {

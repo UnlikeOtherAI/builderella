@@ -31,8 +31,7 @@ fn declared(inventory: &Inventory, name: &str) -> Option<bool> {
 /// no field for it, so a declared capability decides and otherwise the
 /// operating system's default does: only Linux is assumed case sensitive.
 pub(crate) fn case_sensitive_fs(inventory: &Inventory) -> bool {
-    declared(inventory, CAP_CASE_SENSITIVE_FS)
-        .unwrap_or(inventory.os.platform.os == Os::Linux)
+    declared(inventory, CAP_CASE_SENSITIVE_FS).unwrap_or(inventory.os.platform.os == Os::Linux)
 }
 
 /// Whether the worker can create symbolic links: declared, or assumed on
@@ -271,7 +270,10 @@ mod tests {
     fn a_declared_capability_overrides_the_default() {
         let mac = inventory(
             Os::Macos,
-            vec![capability(CAP_CASE_SENSITIVE_FS, CapabilityState::Installed)],
+            vec![capability(
+                CAP_CASE_SENSITIVE_FS,
+                CapabilityState::Installed,
+            )],
         );
         assert!(case_sensitive_fs(&mac));
         let windows = inventory(

@@ -10,6 +10,7 @@ use crate::sweeps::send_cancel;
 use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
+use bella_core::ErrorCode;
 use bella_core::api::{
     ArtifactView, ExplainResponse, IDEMPOTENCY_HEADER, JobView, ListJobsQuery, LogPage, LogQuery,
     PlacementOption, PlanRequest, PlanResponse, ProjectPolicy, SubmitJobRequest, WaitQuery,
@@ -21,7 +22,6 @@ use bella_core::job::{
 };
 use bella_core::protocol::ControllerCommand;
 use bella_core::store::ObjectStore;
-use bella_core::ErrorCode;
 use bella_ledger::{CancelOutcome, LedgerError};
 use bella_scheduler::QueuedJob;
 use std::collections::{BTreeMap, BTreeSet};
@@ -387,9 +387,9 @@ fn suggestions(code: QueueReasonCode) -> Vec<String> {
             "wait for the project's running work, or finish one of its environments",
             "ask an administrator to raise the project's limit",
         ],
-        Code::ProjectNotAllowed | Code::BuildsDisabled | Code::SourceLanOnly => &[
-            "ask an administrator to allow this project on a suitable machine",
-        ],
+        Code::ProjectNotAllowed | Code::BuildsDisabled | Code::SourceLanOnly => {
+            &["ask an administrator to allow this project on a suitable machine"]
+        }
         Code::CloudManualOnly => &["ask an administrator to authorise cloud capacity for this job"],
         Code::ForegroundProtection
         | Code::MemoryPressure

@@ -95,7 +95,9 @@ async fn a61_roles_are_enforced_on_every_route() {
     assert!(after.flags.is_empty());
 
     // A viewer reads but does not submit or upload.
-    let snapshot = harness.snapshot(&developer, "app", &[("a", &b"a"[..])]).await;
+    let snapshot = harness
+        .snapshot(&developer, "app", &[("a", &b"a"[..])])
+        .await;
     let _: Vec<serde_json::Value> = viewer.get("/jobs").await;
     forbidden(
         viewer
@@ -104,7 +106,11 @@ async fn a61_roles_are_enforced_on_every_route() {
         "viewer submits",
     );
     let refusal = viewer
-        .put_bytes(&Digest::of_bytes(b"v"), "application/octet-stream", b"v".to_vec())
+        .put_bytes(
+            &Digest::of_bytes(b"v"),
+            "application/octet-stream",
+            b"v".to_vec(),
+        )
         .await
         .expect_err("viewer uploads");
     assert_eq!(refusal.status, 403);
@@ -128,7 +134,9 @@ async fn a61_roles_are_enforced_on_every_route() {
         )
         .await;
     assert_eq!(response.status(), 200);
-    machine.put_object(&Digest::of_bytes(b"artifact"), b"artifact").await;
+    machine
+        .put_object(&Digest::of_bytes(b"artifact"), b"artifact")
+        .await;
 
     // A principal cannot open the worker socket.
     let opened = open_socket(harness.addr(), None, &harness.admin).await;
@@ -149,7 +157,10 @@ async fn a61_roles_are_enforced_on_every_route() {
         .await
         .unwrap_err();
     assert_eq!(refusal.status, 401);
-    assert_eq!(open_socket(harness.addr(), None, "nonsense").await.err(), Some(401));
+    assert_eq!(
+        open_socket(harness.addr(), None, "nonsense").await.err(),
+        Some(401)
+    );
 
     // The administrator may do all of it.
     let changed: bella_core::api::MachineView = harness
@@ -178,7 +189,10 @@ async fn whoami_version_and_health() {
         let response = http_client(None).get(&url).send().await.unwrap();
         assert_eq!(response.status(), 200, "{url}");
     }
-    let unknown = harness.admin_api().try_get::<serde_json::Value>("/nope").await;
+    let unknown = harness
+        .admin_api()
+        .try_get::<serde_json::Value>("/nope")
+        .await;
     assert_eq!(unknown.unwrap_err().error.code, ErrorCode::NotFound);
 }
 
@@ -260,7 +274,10 @@ async fn objects_in_both_encodings_and_digest_mismatch_refused() {
             .raw(reqwest::Method::GET, &format!("/objects/{digest}?raw=1"))
             .await;
         assert_eq!(response.status(), 200);
-        assert_eq!(response.headers()["content-type"], "application/octet-stream");
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/octet-stream"
+        );
         assert_eq!(&response.bytes().await.unwrap()[..], &content[..]);
     }
     let missing = api
@@ -293,7 +310,11 @@ async fn objects_in_both_encodings_and_digest_mismatch_refused() {
 
     // A body that is not the store's encoding is a bad request.
     let refusal = api
-        .put_bytes(&wrong, "application/vnd.builderella.object", b"garbage".to_vec())
+        .put_bytes(
+            &wrong,
+            "application/vnd.builderella.object",
+            b"garbage".to_vec(),
+        )
         .await
         .unwrap_err();
     assert_eq!(refusal.status, 400);
@@ -396,7 +417,11 @@ async fn a_snapshot_with_a_missing_object_is_refused() {
 /// One parsed server-sent event, or a comment line.
 #[derive(Debug)]
 enum Sse {
-    Event { id: u64, kind: String, data: bella_core::api::EventRecord },
+    Event {
+        id: u64,
+        kind: String,
+        data: bella_core::api::EventRecord,
+    },
     Comment,
 }
 
@@ -428,7 +453,9 @@ impl SseReader {
                 let block: String = self.buffer.drain(..end + 2).collect();
                 return Some(parse_sse(block.trim_end()));
             }
-            let chunk = tokio::time::timeout_at(deadline, self.body.next()).await.ok()??;
+            let chunk = tokio::time::timeout_at(deadline, self.body.next())
+                .await
+                .ok()??;
             self.buffer
                 .push_str(std::str::from_utf8(&chunk.unwrap()).unwrap());
         }
@@ -471,8 +498,19 @@ fn parse_sse(block: &str) -> Sse {
         return Sse::Comment;
     }
     let mut lines = block.lines();
-    let id = lines.next().unwrap().strip_prefix("id: ").unwrap().parse().unwrap();
-    let kind = lines.next().unwrap().strip_prefix("event: ").unwrap().to_string();
+    let id = lines
+        .next()
+        .unwrap()
+        .strip_prefix("id: ")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let kind = lines
+        .next()
+        .unwrap()
+        .strip_prefix("event: ")
+        .unwrap()
+        .to_string();
     let data = serde_json::from_str(lines.next().unwrap().strip_prefix("data: ").unwrap()).unwrap();
     assert!(lines.next().is_none(), "one data line per event: {block}");
     Sse::Event { id, kind, data }
@@ -581,7 +619,11 @@ async fn enrollment_is_rate_limited_before_the_code_is_checked() {
         .unwrap_err();
     assert_eq!(refusal.status, 503);
     assert_eq!(refusal.error.code, ErrorCode::Unavailable);
-    let retry_after: u64 = refusal.headers["retry-after"].to_str().unwrap().parse().unwrap();
+    let retry_after: u64 = refusal.headers["retry-after"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
     assert!((1..=60).contains(&retry_after));
 
     harness.advance(Duration::from_secs(60));
@@ -711,7 +753,12 @@ async fn the_dashboard_is_served_with_its_security_headers() {
     let body = page.text().await.unwrap();
     assert!(body.contains("<html"), "{body}");
 
-    for path in ["/nope", "/assets/../ledger.sqlite", "/%2e%2e/ledger.sqlite", "/assets/missing.js"] {
+    for path in [
+        "/nope",
+        "/assets/../ledger.sqlite",
+        "/%2e%2e/ledger.sqlite",
+        "/assets/missing.js",
+    ] {
         let response = client.get(format!("{base}{path}")).send().await.unwrap();
         assert_eq!(response.status(), 404, "{path}");
     }

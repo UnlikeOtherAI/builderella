@@ -2,9 +2,7 @@
 //! scripted worker on the real WebSocket.
 
 use crate::common::*;
-use bella_core::api::{
-    ArtifactView, ExplainResponse, JobView, LogPage, WaitResponse,
-};
+use bella_core::api::{ArtifactView, ExplainResponse, JobView, LogPage, WaitResponse};
 use bella_core::ids::{AttemptId, Digest, JobId, MachineId};
 use bella_core::job::{CleanupState, JobPhase, Outcome, QueueReasonCode};
 use bella_core::machine::AvailabilityFlag;
@@ -24,7 +22,10 @@ fn current(job: &JobView) -> &bella_core::api::AttemptView {
 }
 
 /// Read messages for `limit` and return the offers among them.
-async fn offers_within(worker: &mut FakeWorker, limit: Duration) -> Vec<(bella_core::ids::CommandId, bella_core::protocol::Offer)> {
+async fn offers_within(
+    worker: &mut FakeWorker,
+    limit: Duration,
+) -> Vec<(bella_core::ids::CommandId, bella_core::protocol::Offer)> {
     let deadline = tokio::time::Instant::now() + limit;
     let mut offers = Vec::new();
     loop {
@@ -108,7 +109,9 @@ async fn happy_path_from_enrollment_to_release() {
     assert_eq!(running.phase, JobPhase::Executing);
     assert!(current(&running).start_committed);
 
-    worker.log(&attempt, "compile", b"hello from the build\n").await;
+    worker
+        .log(&attempt, "compile", b"hello from the build\n")
+        .await;
     worker.log(&attempt, "compile", b"second line\n").await;
 
     let artifact = b"\x7fELF built program".to_vec();
@@ -146,12 +149,18 @@ async fn happy_path_from_enrollment_to_release() {
     assert!(!waited.timed_out);
     assert_eq!(waited.job.outcome, Some(Outcome::Succeeded));
     let done = harness
-        .job_until(&job.id, "the release", |job| job.phase == JobPhase::Finished)
+        .job_until(&job.id, "the release", |job| {
+            job.phase == JobPhase::Finished
+        })
         .await;
     assert_eq!(current(&done).cleanup, CleanupState::Released);
 
     let logs: LogPage = developer.get(&format!("/jobs/{}/logs", job.id)).await;
-    let text: String = logs.entries.iter().map(|entry| entry.text.as_str()).collect();
+    let text: String = logs
+        .entries
+        .iter()
+        .map(|entry| entry.text.as_str())
+        .collect();
     assert_eq!(text, "hello from the build\nsecond line\n");
     assert!(!logs.truncated);
 
@@ -229,7 +238,10 @@ async fn a01_idempotent_concurrent_submissions_never_over_reserve() {
         .submit(&request("app", snapshot.clone(), different), Some("key-0"))
         .await
         .unwrap_err();
-    assert_eq!(refusal.error.code, bella_core::ErrorCode::IdempotencyMismatch);
+    assert_eq!(
+        refusal.error.code,
+        bella_core::ErrorCode::IdempotencyMismatch
+    );
 
     // Run every job to completion on the two workers, checking after every
     // offer that neither machine is reserved beyond what it reported.
@@ -240,7 +252,11 @@ async fn a01_idempotent_concurrent_submissions_never_over_reserve() {
     let mut max_held = 0;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     while finished.len() < keys {
-        assert!(tokio::time::Instant::now() < deadline, "only {} jobs finished", finished.len());
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "only {} jobs finished",
+            finished.len()
+        );
         for worker in [&mut worker_a, &mut worker_b] {
             let Some(message) = worker.poll(Duration::from_millis(20)).await else {
                 continue;
@@ -267,7 +283,9 @@ async fn a01_idempotent_concurrent_submissions_never_over_reserve() {
                 ControllerCommand::Start { attempt, .. } => {
                     worker.ack(&envelope.command_id).await;
                     worker.send_event(&attempt, AttemptEvent::Preparing).await;
-                    worker.send_event(&attempt, exited(Outcome::Succeeded)).await;
+                    worker
+                        .send_event(&attempt, exited(Outcome::Succeeded))
+                        .await;
                     worker.send_event(&attempt, released()).await;
                     *held.get_mut(&worker.machine_id).unwrap() -= 1;
                     finished.insert(job_of[&attempt.attempt_id].clone());
@@ -279,7 +297,9 @@ async fn a01_idempotent_concurrent_submissions_never_over_reserve() {
     assert!(max_held >= 2, "the machines were used in parallel");
     for id in &jobs {
         harness
-            .job_until(id, "every job to finish", |job| job.phase == JobPhase::Finished)
+            .job_until(id, "every job to finish", |job| {
+                job.phase == JobPhase::Finished
+            })
             .await;
     }
     for id in [&worker_a.machine_id, &worker_b.machine_id] {
@@ -297,13 +317,21 @@ async fn a02_two_jobs_compete_for_the_last_memory() {
     let harness = Harness::start().await;
     let developer = harness.developer().await;
     let mut worker = harness.worker("builder").await;
-    let first = harness.submit(&developer, "app", spec_with_memory(30)).await;
-    let second = harness.submit(&developer, "app", spec_with_memory(30)).await;
+    let first = harness
+        .submit(&developer, "app", spec_with_memory(30))
+        .await;
+    let second = harness
+        .submit(&developer, "app", spec_with_memory(30))
+        .await;
 
     let offers = offers_within(&mut worker, Duration::from_secs(2)).await;
     assert_eq!(offers.len(), 1, "exactly one of the two jobs fits");
     let offered = offers[0].1.job_id.clone();
-    let waiting = if offered == first.id { &second.id } else { &first.id };
+    let waiting = if offered == first.id {
+        &second.id
+    } else {
+        &first.id
+    };
     assert_eq!(offers[0].1.reservation.memory_bytes, 30 * GIB);
 
     let queued = harness
@@ -311,7 +339,11 @@ async fn a02_two_jobs_compete_for_the_last_memory() {
         .await;
     assert_eq!(queued.phase, JobPhase::Queued);
     let reason = queued.queue_reason.unwrap();
-    assert_eq!(reason.code, QueueReasonCode::WaitingForCapacity, "{reason:?}");
+    assert_eq!(
+        reason.code,
+        QueueReasonCode::WaitingForCapacity,
+        "{reason:?}"
+    );
     let explain: ExplainResponse = developer.get(&format!("/jobs/{waiting}/explain")).await;
     assert_eq!(explain.reason.code, QueueReasonCode::WaitingForCapacity);
     assert_eq!(explain.position, Some(1));
@@ -383,7 +415,10 @@ async fn a37_the_offer_names_the_snapshot_registered_at_submission() {
         .try_post::<JobView>("/jobs", &request("app", unknown, spec()))
         .await
         .unwrap_err();
-    assert!(refusal.status == 404 || refusal.status == 422, "{refusal:?}");
+    assert!(
+        refusal.status == 404 || refusal.status == 422,
+        "{refusal:?}"
+    );
 }
 
 /// A13: an offer that expires or is rejected before it starts puts the job
@@ -424,7 +459,12 @@ async fn a13_expired_or_rejected_offers_requeue_and_late_accepts_start_nothing()
     assert_no_start_or_offer(&mut worker, "after a late acceptance").await;
     let still = harness.job(&job.id).await;
     assert_eq!(still.phase, JobPhase::Queued);
-    assert!(still.attempts.iter().all(|attempt| !attempt.start_committed));
+    assert!(
+        still
+            .attempts
+            .iter()
+            .all(|attempt| !attempt.start_committed)
+    );
 
     // After the back-off the job is offered again, with a new generation;
     // this time it is rejected and goes back to the queue once more.
@@ -448,7 +488,12 @@ async fn a13_expired_or_rejected_offers_requeue_and_late_accepts_start_nothing()
             job.phase == JobPhase::Queued && job.attempts.len() == 2
         })
         .await;
-    assert!(requeued.attempts.iter().all(|attempt| !attempt.start_committed));
+    assert!(
+        requeued
+            .attempts
+            .iter()
+            .all(|attempt| !attempt.start_committed)
+    );
     assert!(harness.machine(&worker.machine_id).await.reserved.is_zero());
 }
 
@@ -514,7 +559,9 @@ async fn a14_silent_machines_are_flagged_but_keep_their_reservations() {
     let waiting = harness.submit(&developer, "app", spec()).await;
     assert_no_start_or_offer(&mut worker, "a stale machine").await;
     let queued = harness
-        .job_until(&waiting.id, "a queue reason", |job| job.queue_reason.is_some())
+        .job_until(&waiting.id, "a queue reason", |job| {
+            job.queue_reason.is_some()
+        })
         .await;
     assert_eq!(queued.phase, JobPhase::Queued);
 
@@ -572,7 +619,10 @@ async fn a15_a60_restart_reconciles_before_offers_and_fences_old_generations() {
     // Disconnected and not reconciled: nothing is dispatched to it.
     let machine = harness.machine(&enrolled.machine_id).await;
     assert!(!machine.connected);
-    assert_eq!(machine.reserved.memory_bytes, GIB, "the started attempt stays held");
+    assert_eq!(
+        machine.reserved.memory_bytes, GIB,
+        "the started attempt stays held"
+    );
 
     // The machine rebooted, so its processes cannot have survived. The
     // handshake reconciles first: Welcome and Reconcile are the first two
@@ -591,11 +641,16 @@ async fn a15_a60_restart_reconciles_before_offers_and_fences_old_generations() {
         .iter()
         .find(|attempt| attempt.id == old.attempt_id)
         .unwrap();
-    assert!(matches!(first.outcome, Some(Outcome::InfraInterrupted { .. })), "{first:?}");
+    assert!(
+        matches!(first.outcome, Some(Outcome::InfraInterrupted { .. })),
+        "{first:?}"
+    );
 
     // A late event from the old generation claims success. It is
     // acknowledged so the worker stops resending it, and changes nothing.
-    worker.send_event_at(&old, 2, exited(Outcome::Succeeded)).await;
+    worker
+        .send_event_at(&old, 2, exited(Outcome::Succeeded))
+        .await;
     worker.expect_events_acked(&old, 2).await;
     assert!(harness.job(&job.id).await.outcome.is_none());
 
@@ -613,9 +668,14 @@ async fn a15_a60_restart_reconciles_before_offers_and_fences_old_generations() {
         )
         .await;
     let done = harness
-        .job_until(&job.id, "the job to finish", |job| job.phase == JobPhase::Finished)
+        .job_until(&job.id, "the job to finish", |job| {
+            job.phase == JobPhase::Finished
+        })
         .await;
-    assert!(matches!(done.outcome, Some(Outcome::Failed { .. })), "{done:?}");
+    assert!(
+        matches!(done.outcome, Some(Outcome::Failed { .. })),
+        "{done:?}"
+    );
     let _ = developer;
 }
 
@@ -632,7 +692,9 @@ async fn a60_reconcile_verdicts_after_a_restart() {
     let developer = harness.api(&developer_token);
     let running = harness.submit(&developer, "app", spec()).await;
     let started = worker.start_next().await;
-    worker.event(&started.attempt, AttemptEvent::Preparing).await;
+    worker
+        .event(&started.attempt, AttemptEvent::Preparing)
+        .await;
     let pending = harness.submit(&developer, "app", spec()).await;
     let (_, offered) = worker.expect_offer().await;
     assert_eq!(offered.job_id, pending.id);
@@ -673,14 +735,22 @@ async fn a60_reconcile_verdicts_after_a_restart() {
         .into_iter()
         .map(|verdict| (verdict.attempt.attempt_id, verdict.action))
         .collect();
-    assert_eq!(actions[&started.attempt.attempt_id], ReconcileAction::Continue);
-    assert_eq!(actions[&offered.attempt.attempt_id], ReconcileAction::Forget);
+    assert_eq!(
+        actions[&started.attempt.attempt_id],
+        ReconcileAction::Continue
+    );
+    assert_eq!(
+        actions[&offered.attempt.attempt_id],
+        ReconcileAction::Forget
+    );
 
     // The started attempt carries on and finishes normally.
     worker.heartbeat().await;
     worker.finish(&started.attempt, Outcome::Succeeded).await;
     let done = harness
-        .job_until(&running.id, "the job to finish", |job| job.phase == JobPhase::Finished)
+        .job_until(&running.id, "the job to finish", |job| {
+            job.phase == JobPhase::Finished
+        })
         .await;
     assert_eq!(done.outcome, Some(Outcome::Succeeded));
 }
@@ -722,8 +792,7 @@ async fn a22_environment_lease_expiry_finishes_and_releases_on_proof() {
             ],
         )
         .await;
-    let environments: Vec<bella_core::api::EnvironmentView> =
-        developer.get("/environments").await;
+    let environments: Vec<bella_core::api::EnvironmentView> = developer.get("/environments").await;
     assert_eq!(environments.len(), 1);
     let environment = environments[0].clone();
     assert_eq!(environment.job_id, job.id);
@@ -744,9 +813,13 @@ async fn a22_environment_lease_expiry_finishes_and_releases_on_proof() {
             _ => None,
         })
         .await;
-    let finishing: bella_core::api::EnvironmentView =
-        developer.get(&format!("/environments/{}", environment.id)).await;
-    assert_eq!(finishing.state, bella_core::api::EnvironmentState::Finishing);
+    let finishing: bella_core::api::EnvironmentView = developer
+        .get(&format!("/environments/{}", environment.id))
+        .await;
+    assert_eq!(
+        finishing.state,
+        bella_core::api::EnvironmentState::Finishing
+    );
     // A renewal now is refused and changes nothing.
     let refused = developer
         .try_action::<bella_core::api::EnvironmentView>(&format!(
@@ -754,15 +827,26 @@ async fn a22_environment_lease_expiry_finishes_and_releases_on_proof() {
             environment.id
         ))
         .await;
-    assert!(refused.is_err(), "a finishing environment cannot be renewed");
-    let unchanged: bella_core::api::EnvironmentView =
-        developer.get(&format!("/environments/{}", environment.id)).await;
+    assert!(
+        refused.is_err(),
+        "a finishing environment cannot be renewed"
+    );
+    let unchanged: bella_core::api::EnvironmentView = developer
+        .get(&format!("/environments/{}", environment.id))
+        .await;
     assert_eq!(unchanged.effective_deadline, finishing.effective_deadline);
     assert_eq!(unchanged.lease, finishing.lease);
 
     // Until the worker proves the cleanup the capacity stays held, and the
     // request is repeated.
-    assert_eq!(harness.machine(&worker.machine_id).await.reserved.memory_bytes, GIB);
+    assert_eq!(
+        harness
+            .machine(&worker.machine_id)
+            .await
+            .reserved
+            .memory_bytes,
+        GIB
+    );
     harness.advance(Duration::from_secs(6));
     worker
         .expect_command("FinishEnvironment again", |command| match command {
@@ -770,19 +854,38 @@ async fn a22_environment_lease_expiry_finishes_and_releases_on_proof() {
             _ => None,
         })
         .await;
-    assert_eq!(harness.machine(&worker.machine_id).await.reserved.memory_bytes, GIB);
+    assert_eq!(
+        harness
+            .machine(&worker.machine_id)
+            .await
+            .reserved
+            .memory_bytes,
+        GIB
+    );
 
     worker.event(&attempt, exited(Outcome::Succeeded)).await;
-    assert_eq!(harness.machine(&worker.machine_id).await.reserved.memory_bytes, GIB);
+    assert_eq!(
+        harness
+            .machine(&worker.machine_id)
+            .await
+            .reserved
+            .memory_bytes,
+        GIB
+    );
     worker.event(&attempt, released()).await;
     harness
-        .machine_until(&worker.machine_id, "the release", |machine| machine.reserved.is_zero())
+        .machine_until(&worker.machine_id, "the release", |machine| {
+            machine.reserved.is_zero()
+        })
         .await;
-    let ended: bella_core::api::EnvironmentView =
-        developer.get(&format!("/environments/{}", environment.id)).await;
+    let ended: bella_core::api::EnvironmentView = developer
+        .get(&format!("/environments/{}", environment.id))
+        .await;
     assert_eq!(ended.state, bella_core::api::EnvironmentState::Ended);
     let done = harness
-        .job_until(&job.id, "the job to finish", |job| job.phase == JobPhase::Finished)
+        .job_until(&job.id, "the job to finish", |job| {
+            job.phase == JobPhase::Finished
+        })
         .await;
     assert_eq!(done.outcome, Some(Outcome::Succeeded));
 }
@@ -816,13 +919,21 @@ async fn a59_an_announced_artifact_is_listed_only_once_published() {
         )
         .await;
     let done = harness
-        .job_until(&job.id, "the job to finish", |job| job.phase == JobPhase::Finished)
+        .job_until(&job.id, "the job to finish", |job| {
+            job.phase == JobPhase::Finished
+        })
         .await;
     assert_eq!(done.outcome, Some(Outcome::Succeeded));
     let listed: Vec<ArtifactView> = developer.get(&format!("/jobs/{}/artifacts", job.id)).await;
-    assert!(listed.is_empty(), "an artifact without its object is not listed");
+    assert!(
+        listed.is_empty(),
+        "an artifact without its object is not listed"
+    );
 
-    harness.api(&worker.token).put_object(&digest, &content).await;
+    harness
+        .api(&worker.token)
+        .put_object(&digest, &content)
+        .await;
     let listed: Vec<ArtifactView> = developer.get(&format!("/jobs/{}/artifacts", job.id)).await;
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].digest, digest);
@@ -835,8 +946,12 @@ async fn cancelling_queued_offered_and_running_jobs() {
     let developer = harness.developer().await;
 
     // Queued: nothing is reserved, so it ends at once.
-    let queued = harness.submit(&developer, "app", spec_with_memory(500)).await;
-    let cancelled: JobView = developer.action(&format!("/jobs/{}/cancel", queued.id)).await;
+    let queued = harness
+        .submit(&developer, "app", spec_with_memory(500))
+        .await;
+    let cancelled: JobView = developer
+        .action(&format!("/jobs/{}/cancel", queued.id))
+        .await;
     assert_eq!(cancelled.phase, JobPhase::Finished);
     assert_eq!(cancelled.outcome, Some(Outcome::Cancelled));
 
@@ -844,11 +959,15 @@ async fn cancelling_queued_offered_and_running_jobs() {
     let mut worker = harness.worker("builder").await;
     let offered = harness.submit(&developer, "app", spec()).await;
     let (command_id, offer) = worker.expect_offer().await;
-    let cancelled: JobView = developer.action(&format!("/jobs/{}/cancel", offered.id)).await;
+    let cancelled: JobView = developer
+        .action(&format!("/jobs/{}/cancel", offered.id))
+        .await;
     assert_eq!(cancelled.phase, JobPhase::Finished);
     assert_eq!(cancelled.outcome, Some(Outcome::Cancelled));
     worker
-        .expect("the Revoke", |message| revoke_for(message, &offer.attempt).then_some(()))
+        .expect("the Revoke", |message| {
+            revoke_for(message, &offer.attempt).then_some(())
+        })
         .await;
     // Accepting it now starts nothing.
     worker.accept(&command_id, &offer).await;
@@ -860,7 +979,9 @@ async fn cancelling_queued_offered_and_running_jobs() {
     let running = harness.submit(&developer, "app", spec()).await;
     let offer = worker.start_next().await;
     worker.event(&offer.attempt, AttemptEvent::Preparing).await;
-    let requested: JobView = developer.action(&format!("/jobs/{}/cancel", running.id)).await;
+    let requested: JobView = developer
+        .action(&format!("/jobs/{}/cancel", running.id))
+        .await;
     assert!(requested.cancel_requested);
     assert_ne!(requested.phase, JobPhase::Finished);
     let is_cancel = |command: &ControllerCommand| match command {
@@ -897,16 +1018,32 @@ async fn cancelling_queued_offered_and_running_jobs() {
     assert_eq!(verdicts[0].action, ReconcileAction::Abort);
     worker.heartbeat().await;
     harness.advance(Duration::from_secs(6));
-    worker.expect_command("Cancel after the reconnect", is_cancel).await;
-    assert_eq!(harness.machine(&worker.machine_id).await.reserved.memory_bytes, GIB);
+    worker
+        .expect_command("Cancel after the reconnect", is_cancel)
+        .await;
+    assert_eq!(
+        harness
+            .machine(&worker.machine_id)
+            .await
+            .reserved
+            .memory_bytes,
+        GIB
+    );
 
-    worker.send_event_at(&offer.attempt, 2, AttemptEvent::Cleanup {
-        state: CleanupState::ProcessesStopped,
-        detail: "stopped".into(),
-    })
-    .await;
+    worker
+        .send_event_at(
+            &offer.attempt,
+            2,
+            AttemptEvent::Cleanup {
+                state: CleanupState::ProcessesStopped,
+                detail: "stopped".into(),
+            },
+        )
+        .await;
     worker.expect_events_acked(&offer.attempt, 2).await;
-    worker.send_event_at(&offer.attempt, 3, exited(Outcome::Cancelled)).await;
+    worker
+        .send_event_at(&offer.attempt, 3, exited(Outcome::Cancelled))
+        .await;
     worker.send_event_at(&offer.attempt, 4, released()).await;
     worker.expect_events_acked(&offer.attempt, 4).await;
     let done = harness
@@ -947,7 +1084,9 @@ async fn the_handshake_refuses_a_wrong_first_frame() {
         serde_json::to_string(&hello(PROTOCOL_VERSION, MachineId::generate())).unwrap(),
     ];
     for first in firsts {
-        let mut socket = open_socket(harness.addr(), None, &enrolled.token).await.unwrap();
+        let mut socket = open_socket(harness.addr(), None, &enrolled.token)
+            .await
+            .unwrap();
         socket.send(Message::text(first.clone())).await.unwrap();
         let mut reason = None;
         while let Some(Ok(frame)) = socket.next().await {
@@ -960,7 +1099,10 @@ async fn the_handshake_refuses_a_wrong_first_frame() {
                 _ => {}
             }
         }
-        assert!(reason.is_some(), "the controller says why it refuses {first}");
+        assert!(
+            reason.is_some(),
+            "the controller says why it refuses {first}"
+        );
     }
     assert!(!harness.machine(&enrolled.machine_id).await.connected);
 }
@@ -981,4 +1123,100 @@ async fn a_second_connection_replaces_the_first() {
     let (_, offer) = second.expect_offer().await;
     assert_eq!(offer.job_id, job.id);
     assert!(harness.machine(&enrolled.machine_id).await.connected);
+}
+
+/// A running attempt's execution authority is renewed on its own interval
+/// while its machine is connected.
+#[tokio::test]
+async fn running_attempts_get_their_authority_renewed() {
+    let harness = Harness::start_with(|config| {
+        config.tuning.authority_renew_interval = Duration::from_millis(50);
+    })
+    .await;
+    let developer = harness.developer().await;
+    let mut worker = harness.worker("builder").await;
+    harness.submit(&developer, "app", spec()).await;
+    let (command_id, offer) = worker.expect_offer().await;
+    worker.accept(&command_id, &offer).await;
+    let (start_id, granted) = worker.expect_start(&offer.attempt).await;
+    worker.ack(&start_id).await;
+    harness.advance(Duration::from_secs(10));
+    worker.heartbeat().await;
+    let renewed = worker
+        .expect_command("RenewAuthority", |command| match command {
+            ControllerCommand::RenewAuthority { attempt, authority }
+                if *attempt == offer.attempt && authority.valid_until > granted.valid_until =>
+            {
+                Some(*authority)
+            }
+            _ => None,
+        })
+        .await;
+    assert_eq!(renewed.hard_deadline, granted.hard_deadline);
+}
+
+/// A heartbeat whose sequence skips ahead is not explained away: the
+/// connection is closed so that the worker reconnects and reconciles.
+#[tokio::test]
+async fn a_heartbeat_sequence_gap_forces_a_reconcile() {
+    use bella_core::protocol::WorkerMsg;
+
+    let harness = Harness::start().await;
+    let mut worker = harness.worker("builder").await;
+    worker.heartbeat_message();
+    worker.heartbeat_message();
+    let skipped = worker.heartbeat_message();
+    worker
+        .send(WorkerMsg::Heartbeat {
+            heartbeat: Box::new(skipped),
+        })
+        .await;
+    let reason = worker.expect_close().await;
+    assert!(reason.contains("reconcile"), "{reason}");
+}
+
+/// Garbage collection removes unreferenced objects past the grace period
+/// and keeps the manifest and files of a snapshot a live job uses.
+#[tokio::test]
+async fn garbage_collection_keeps_what_live_jobs_and_artifacts_need() {
+    let harness = Harness::start().await;
+    let developer = harness.developer().await;
+    let orphan = b"nobody refers to this".to_vec();
+    let orphan_digest = Digest::of_bytes(&orphan);
+    developer.put_object(&orphan_digest, &orphan).await;
+    let source = b"fn main() {}\n".to_vec();
+    let job = harness
+        .submit(&developer, "app", spec_with_memory(500))
+        .await;
+    let snapshot: bella_core::api::SnapshotView = developer
+        .get(&format!("/snapshots/{}", job.snapshot_id))
+        .await;
+
+    // Within the grace period nothing is removed.
+    let kept = harness.handle().collect_garbage().await.unwrap();
+    assert_eq!(kept.objects_removed, 0);
+    assert!(kept.objects_in_grace >= 1);
+
+    harness.advance(Duration::from_secs(2 * 24 * 60 * 60));
+    let collected = harness.handle().collect_garbage().await.unwrap();
+    assert_eq!(collected.objects_removed, 1, "{collected:?}");
+    let status = |digest: Digest| {
+        let api = developer.clone();
+        async move {
+            api.raw(reqwest::Method::HEAD, &format!("/objects/{digest}"))
+                .await
+                .status()
+                .as_u16()
+        }
+    };
+    assert_eq!(status(orphan_digest).await, 404);
+    assert_eq!(status(Digest::of_bytes(&source)).await, 200);
+    assert_eq!(status(snapshot.manifest_digest.clone()).await, 200);
+
+    // Once the job has finished its snapshot is no longer needed.
+    let _: JobView = developer.action(&format!("/jobs/{}/cancel", job.id)).await;
+    harness.advance(Duration::from_secs(2 * 24 * 60 * 60));
+    let collected = harness.handle().collect_garbage().await.unwrap();
+    assert_eq!(collected.objects_removed, 2, "{collected:?}");
+    assert_eq!(status(snapshot.manifest_digest).await, 404);
 }

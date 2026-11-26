@@ -134,7 +134,9 @@ impl From<StoreError> for Failure {
         match &error {
             StoreError::NotFound(digest) => Failure::not_found(format!("object {digest}")),
             // The wire contract answers a mismatch with 409.
-            StoreError::DigestMismatch { .. } => Failure::new(ErrorCode::Conflict, error.to_string()),
+            StoreError::DigestMismatch { .. } => {
+                Failure::new(ErrorCode::Conflict, error.to_string())
+            }
             StoreError::TooLarge { .. } => Failure::new(ErrorCode::TooLarge, error.to_string()),
             StoreError::Unavailable(_) => Failure::new(ErrorCode::Unavailable, error.to_string()),
             StoreError::Io(io) if io.kind() == std::io::ErrorKind::InvalidData => {
@@ -149,9 +151,8 @@ impl IntoResponse for Failure {
     fn into_response(self) -> Response {
         let status = StatusCode::from_u16(self.error.code.http_status())
             .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let body = serde_json::to_vec(&self.error).unwrap_or_else(|_| {
-            br#"{"code":"internal","message":"internal error"}"#.to_vec()
-        });
+        let body = serde_json::to_vec(&self.error)
+            .unwrap_or_else(|_| br#"{"code":"internal","message":"internal error"}"#.to_vec());
         let mut response = (status, body).into_response();
         let headers = response.headers_mut();
         headers.insert(

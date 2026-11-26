@@ -11,8 +11,8 @@ use crate::server::PeerAddr;
 use crate::state::{App, lock};
 use axum::Extension;
 use axum::extract::State;
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::response::{IntoResponse, Response};
 use bella_core::ids::{AttemptId, BootId, CommandId, MachineId};
 use bella_core::machine::{AvailabilityFlag, Inventory};
@@ -838,11 +838,7 @@ impl Session {
                     Some(digest) => !app.store.contains(digest).unwrap_or(false),
                     None => false,
                 };
-                Ok((
-                    job_id,
-                    missing_object,
-                    ledger.record_attempt_event(&event),
-                ))
+                Ok((job_id, missing_object, ledger.record_attempt_event(&event)))
             })
             .await;
         let (job_id, missing_object, disposition) = match applied {

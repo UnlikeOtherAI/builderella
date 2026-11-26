@@ -146,8 +146,9 @@ pub(crate) fn ensure_complete(app: &Shared, id: &SnapshotId) -> ApiResult<()> {
         Err(StoreError::NotFound(digest)) => return Err(gone(&[digest])),
         Err(error) => return Err(error.into()),
     };
-    let manifest: Manifest = serde_json::from_slice(&bytes)
-        .map_err(|error| Failure::internal(format!("stored manifest {id} is unreadable: {error}")))?;
+    let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|error| {
+        Failure::internal(format!("stored manifest {id} is unreadable: {error}"))
+    })?;
     let missing = missing_objects(app.store.as_ref(), manifest.digests())?;
     if !missing.is_empty() {
         return Err(gone(&missing));

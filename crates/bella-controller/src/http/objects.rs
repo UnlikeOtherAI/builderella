@@ -125,7 +125,8 @@ pub(crate) async fn upload(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    if encoding == Encoding::Raw && declared.is_some_and(|length| length > app.tuning.max_object_bytes)
+    if encoding == Encoding::Raw
+        && declared.is_some_and(|length| length > app.tuning.max_object_bytes)
     {
         return Err(Failure::new(
             ErrorCode::TooLarge,
@@ -199,10 +200,7 @@ fn fill(reader: &mut dyn Read, buffer: &mut [u8]) -> io::Result<usize> {
 /// reader reports a damaged object only at its end, so the final chunk is
 /// released only once the content has been verified: a client can never
 /// receive all of a corrupt object as if it were sound.
-fn pump_verified(
-    mut reader: Box<dyn Read + Send>,
-    sender: mpsc::Sender<io::Result<Bytes>>,
-) {
+fn pump_verified(mut reader: Box<dyn Read + Send>, sender: mpsc::Sender<io::Result<Bytes>>) {
     let mut held: Option<Bytes> = None;
     let mut buffer = vec![0u8; CHUNK];
     loop {
@@ -323,7 +321,10 @@ mod tests {
     impl Read for Corrupt {
         fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
             match self.data.read(buffer)? {
-                0 => Err(io::Error::new(io::ErrorKind::InvalidData, "digest mismatch")),
+                0 => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "digest mismatch",
+                )),
                 n => Ok(n),
             }
         }
@@ -375,7 +376,9 @@ mod tests {
         assert!(encoding(&HeaderMap::new()).unwrap() == Encoding::Raw);
         assert!(encoding(&with("application/octet-stream")).unwrap() == Encoding::Raw);
         assert!(encoding(&with("Application/Vnd.Builderella.Object")).unwrap() == Encoding::Stored);
-        assert!(encoding(&with("application/vnd.builderella.object; q=1")).unwrap() == Encoding::Stored);
+        assert!(
+            encoding(&with("application/vnd.builderella.object; q=1")).unwrap() == Encoding::Stored
+        );
         assert!(encoding(&with("text/plain")).is_err());
     }
 }

@@ -50,7 +50,9 @@ impl Bucket {
     fn wait_secs(&self, refill: Duration) -> u64 {
         let missing = 1000u64.saturating_sub(self.milli);
         let millis = u128::from(missing) * refill.as_millis().max(1) / 1000;
-        u64::try_from(millis.div_ceil(1000)).unwrap_or(u64::MAX).max(1)
+        u64::try_from(millis.div_ceil(1000))
+            .unwrap_or(u64::MAX)
+            .max(1)
     }
 }
 

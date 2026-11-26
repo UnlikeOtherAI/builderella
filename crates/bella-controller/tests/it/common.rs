@@ -12,9 +12,7 @@ use bella_core::api::{
 };
 use bella_core::ids::{AttemptId, BootId, CommandId, Digest, JobId, MachineId, SnapshotId};
 use bella_core::job::{CommandSpec, JobSpec, Outcome, StepKind, StepSpec};
-use bella_core::machine::{
-    Hardware, Inventory, LocalControl, MachineProfile, OsInfo, Telemetry,
-};
+use bella_core::machine::{Hardware, Inventory, LocalControl, MachineProfile, OsInfo, Telemetry};
 use bella_core::platform::{Arch, Os, Platform};
 use bella_core::protocol::{
     AttemptEvent, AttemptEventMsg, AttemptRef, AttemptReport, CommandResult, ControllerCommand,
@@ -211,7 +209,12 @@ impl Harness {
     }
 
     /// Poll a job until `done` holds.
-    pub async fn job_until(&self, id: &JobId, what: &str, done: impl Fn(&JobView) -> bool) -> JobView {
+    pub async fn job_until(
+        &self,
+        id: &JobId,
+        what: &str,
+        done: impl Fn(&JobView) -> bool,
+    ) -> JobView {
         let deadline = tokio::time::Instant::now() + PATIENCE;
         loop {
             let job = self.job(id).await;
@@ -284,7 +287,8 @@ impl Harness {
         let snapshot_id = self
             .snapshot(api, project, &[("main.rs", b"fn main() {}\n")])
             .await;
-        api.post("/jobs", &request(project, snapshot_id, spec)).await
+        api.post("/jobs", &request(project, snapshot_id, spec))
+            .await
     }
 }
 
@@ -298,7 +302,9 @@ async fn launch(
     config.clock = Arc::new(clock.clone());
     config.tuning = tuning();
     configure(&mut config);
-    Controller::start(config).await.expect("the controller starts")
+    Controller::start(config)
+        .await
+        .expect("the controller starts")
 }
 
 pub fn request(project: &str, snapshot_id: SnapshotId, spec: JobSpec) -> SubmitJobRequest {
@@ -484,7 +490,11 @@ pub struct Refusal {
 
 impl Api {
     pub fn new(addr: SocketAddr, fingerprint: Option<Fingerprint>, token: Option<String>) -> Self {
-        let scheme = if fingerprint.is_some() { "https" } else { "http" };
+        let scheme = if fingerprint.is_some() {
+            "https"
+        } else {
+            "http"
+        };
         Self {
             http: http_client(fingerprint),
             base: format!("{scheme}://{addr}"),
@@ -515,7 +525,11 @@ impl Api {
         let headers = response.headers().clone();
         let bytes = response.bytes().await.expect("the body arrives");
         if status.is_success() {
-            let text = if bytes.is_empty() { &b"null"[..] } else { &bytes[..] };
+            let text = if bytes.is_empty() {
+                &b"null"[..]
+            } else {
+                &bytes[..]
+            };
             Ok(serde_json::from_slice(text).unwrap_or_else(|error| {
                 panic!(
                     "undecodable {status} body: {error}: {}",
@@ -636,7 +650,11 @@ impl Api {
             .expect("the request is answered")
     }
 
-    pub async fn submit(&self, request: &SubmitJobRequest, key: Option<&str>) -> Result<JobView, Refusal> {
+    pub async fn submit(
+        &self,
+        request: &SubmitJobRequest,
+        key: Option<&str>,
+    ) -> Result<JobView, Refusal> {
         let mut builder = self.builder(reqwest::Method::POST, "/jobs").json(request);
         if let Some(key) = key {
             builder = builder.header(IDEMPOTENCY_HEADER, key);
@@ -661,7 +679,9 @@ pub async fn open_socket(
     fingerprint: Option<Fingerprint>,
     token: &str,
 ) -> Result<WebSocketStream<Box<dyn Io>>, u16> {
-    let tcp = TcpStream::connect(addr).await.expect("the controller accepts");
+    let tcp = TcpStream::connect(addr)
+        .await
+        .expect("the controller accepts");
     let stream: Box<dyn Io> = match fingerprint {
         None => Box::new(tcp),
         Some(fingerprint) => {
@@ -677,13 +697,14 @@ pub async fn open_socket(
     let mut request = format!("ws://{addr}{WORKER_WS_PATH}")
         .into_client_request()
         .unwrap();
-    request.headers_mut().insert(
-        "authorization",
-        format!("Bearer {token}").parse().unwrap(),
-    );
+    request
+        .headers_mut()
+        .insert("authorization", format!("Bearer {token}").parse().unwrap());
     match tokio_tungstenite::client_async(request, stream).await {
         Ok((socket, _)) => Ok(socket),
-        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => Err(response.status().as_u16()),
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            Err(response.status().as_u16())
+        }
         Err(other) => panic!("the WebSocket handshake failed: {other}"),
     }
 }
@@ -957,7 +978,10 @@ impl FakeWorker {
     /// Send one attempt event with the next sequence number, without
     /// waiting for its acknowledgement.
     pub async fn send_event(&mut self, attempt: &AttemptRef, event: AttemptEvent) -> u64 {
-        let seq = self.event_seq.entry(attempt.attempt_id.clone()).or_insert(0);
+        let seq = self
+            .event_seq
+            .entry(attempt.attempt_id.clone())
+            .or_insert(0);
         *seq += 1;
         let seq = *seq;
         self.send_event_at(attempt, seq, event).await;

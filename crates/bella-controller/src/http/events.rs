@@ -44,11 +44,7 @@ pub(crate) struct EventsQuery {
 /// kinds are fixed dotted names, so every field fits on its line.
 fn frame(event: &EventRecord) -> Option<Bytes> {
     let data = serde_json::to_string(event).ok()?;
-    let kind: String = event
-        .kind
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect();
+    let kind: String = event.kind.chars().filter(|c| !c.is_control()).collect();
     Some(Bytes::from(format!(
         "id: {}\nevent: {kind}\ndata: {data}\n\n",
         event.seq

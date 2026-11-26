@@ -56,7 +56,8 @@ fn main() -> io::Result<()> {
         println!("cargo::rerun-if-changed={}", dashboard.display());
     }
 
-    let mut source = String::from("/// Files of the built dashboard, by path relative to its root.\n");
+    let mut source =
+        String::from("/// Files of the built dashboard, by path relative to its root.\n");
     source.push_str("pub(crate) static ASSETS: &[(&str, &[u8])] = &[\n");
     for (name, path) in &files {
         let path = path.canonicalize()?;

@@ -388,7 +388,10 @@ mod tests {
             conn.send_ack(log_ack()),
         )
         .await;
-        assert!(blocked.is_err(), "a full ack queue must make its sender wait");
+        assert!(
+            blocked.is_err(),
+            "a full ack queue must make its sender wait"
+        );
 
         // A command still goes out at once, through the other queue.
         let cancel = ControllerCommand::Cancel {
@@ -481,7 +484,16 @@ mod tests {
 
     #[test]
     fn local_addresses() {
-        for local in ["127.0.0.1", "10.1.2.3", "192.168.1.9", "169.254.0.5", "::1", "fd12::1", "fe80::1", "::ffff:10.0.0.1"] {
+        for local in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "192.168.1.9",
+            "169.254.0.5",
+            "::1",
+            "fd12::1",
+            "fe80::1",
+            "::ffff:10.0.0.1",
+        ] {
             assert!(is_local_address(local.parse().unwrap()), "{local}");
         }
         for remote in ["8.8.8.8", "172.32.0.1", "2001:db8::1", "::ffff:8.8.8.8"] {
