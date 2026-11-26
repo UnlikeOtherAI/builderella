@@ -466,11 +466,10 @@ fn generated_fleets_never_overcommit_and_account_for_every_job() {
     }
     // The generator has to exercise both outcomes and a wide set of reasons,
     // or the checks above prove little.
-    println!("{offers} offers, {reasons} reasons, codes {reason_codes:?}");
     assert!(offers > 400, "only {offers} offers in {SEEDS} fleets");
     assert!(reasons > 2000, "only {reasons} reasons in {SEEDS} fleets");
     assert!(
-        reason_codes.len() >= 12,
+        reason_codes.len() >= 15,
         "only these reasons occurred: {reason_codes:?}"
     );
 }

@@ -3,6 +3,7 @@
 use crate::support::*;
 use bella_core::UnixMillis;
 use bella_core::job::{Priority, QueueReasonCode as Code};
+use bella_core::resources::ResourceVector;
 use bella_scheduler::{QueuedJob, SchedulerConfig, schedule};
 
 const TICK_MS: u64 = 1_000;
@@ -293,6 +294,42 @@ fn a_job_past_the_threshold_that_fits_goes_before_fresh_work() {
     state.config = patient();
     let plan = schedule(&state);
     assert!(offer_for(&plan, &urgent).is_some());
+}
+
+#[test]
+fn a_machine_whose_budget_cannot_hold_the_job_is_not_kept_free() {
+    let p = project("app");
+    // The ceiling would hold 12 GiB, but the worker grants 8 GiB right now,
+    // so draining this machine would not let the large job start.
+    let mut squeezed = machine("workstation", 16, 16);
+    squeezed.effective_budget = Some(ResourceVector::new(16_000, 8 * GIB, 500 * GIB));
+    let large = job("large", &p, 900_000, spec(1, 12));
+    let small = job("small", &p, 1_000, spec(1, 4));
+    let mut state = fleet(
+        vec![squeezed.clone()],
+        vec![p],
+        vec![large.clone(), small.clone()],
+    );
+    state.config = starving_after(600_000);
+
+    let plan = schedule(&state);
+    let waiting = reason_for(&plan, &large);
+    assert_eq!(waiting.code, Code::WaitingForCapacity);
+    assert!(
+        !waiting.message.contains("takes no other work"),
+        "{}",
+        waiting.message
+    );
+    assert_eq!(offered_machine(&plan, &small), squeezed.id);
+
+    // Once the budget is back the machine is kept free for it.
+    squeezed.effective_budget = Some(squeezed.managed_ceiling.clone());
+    squeezed.reserved = vector(1, 8);
+    squeezed.held_attempts = 1;
+    state.machines = vec![squeezed];
+    let plan = schedule(&state);
+    assert!(plan.offers.is_empty());
+    assert_eq!(reason_for(&plan, &small).code, Code::ReservedForOlderJob);
 }
 
 #[test]
