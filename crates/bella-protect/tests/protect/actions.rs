@@ -490,3 +490,48 @@ fn state_for_released_attempts_is_dropped() {
     assert!(!history.is_evicting(&id(1)));
     assert_eq!(history.cpu_limit(&id(1)), None);
 }
+
+#[test]
+fn sampling_faster_than_the_loop_measures_the_same_durations() {
+    let mut host = Host::shared_workstation();
+    host.grants = vec![running(1, 1000, 2 * GIB, GIB)];
+    host.set_pressure(PressureLevel::Critical);
+    let mut history = History::new();
+    let mut evictions = Vec::new();
+    // A sample every 50 ms for five seconds.
+    for step in 0..=100u64 {
+        host.now = UnixMillis(T0.0 + step * 50);
+        host.sample().sampled_at = host.now;
+        history.observe(&host.input());
+        let todo = actions(&host.input(), &history);
+        history.record(&todo, host.now);
+        if !evicted(&todo).is_empty() {
+            evictions.push(step * 50);
+        }
+    }
+    // Critical for exactly the three-second grace, then the cooldown.
+    assert_eq!(evictions, vec![3000]);
+
+    // One calm reading among fast samples does not hide a critical one
+    // taken within the same tenth of a second.
+    let mut host = Host::shared_workstation();
+    host.grants = vec![running(1, 1000, 2 * GIB, GIB)];
+    let mut history = History::new();
+    let mut evictions = Vec::new();
+    for step in 0..=100u64 {
+        host.now = UnixMillis(T0.0 + step * 50);
+        host.sample().sampled_at = host.now;
+        host.set_pressure(if step % 2 == 0 {
+            PressureLevel::Critical
+        } else {
+            PressureLevel::Normal
+        });
+        history.observe(&host.input());
+        let todo = actions(&host.input(), &history);
+        history.record(&todo, host.now);
+        if !evicted(&todo).is_empty() {
+            evictions.push(step * 50);
+        }
+    }
+    assert_eq!(evictions, vec![3000]);
+}
