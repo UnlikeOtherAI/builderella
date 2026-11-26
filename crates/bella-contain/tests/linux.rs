@@ -29,6 +29,10 @@ const PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 const HELPER_MODE: &str = "BELLA_CONTAIN_HELPER_MODE";
 const HELPER_BASE: &str = "BELLA_CONTAIN_HELPER_BASE";
 const NOBODY: u32 = 65534;
+/// Shell loops that end on their own, so a test that fails to kill them
+/// leaves nothing running for long: one burns CPU, one sleeps in short naps.
+const BUSY: &str = "i=0; while [ $i -lt 30000000 ]; do i=$((i+1)); done";
+const NAPS: &str = "i=0; while [ $i -lt 2000 ]; do sleep 0.05; i=$((i+1)); done";
 
 /// The tests start processes, force PIDs and measure CPU time, so they run
 /// one at a time whatever `--test-threads` says.
@@ -334,9 +338,9 @@ fn a24_daemon_outlives_root_and_still_holds_the_scope() {
     // The subshell starts the daemon in the background and exits, so the
     // daemon is an orphan before the root shell returns.
     let root = scope
-        .spawn(&sh(
-            "(while :; do :; done </dev/null >/dev/null 2>&1 &)\nexit 0",
-        ))
+        .spawn(&sh(&format!(
+            "({BUSY} </dev/null >/dev/null 2>&1 &)\nexit 0"
+        )))
         .expect("spawn");
     let root_pid = root.child.pid();
     let (exit, _, _) = finish(root);
@@ -386,12 +390,15 @@ fn a66_work_hidden_behind_nohup_setsid_and_double_fork_is_contained() {
     let (mut scope, _janitor) = new_scope(&adapter, "a66", &Limits::default());
 
     let root = scope
-        .spawn(&sh(concat!(
-            "nohup sh -c 'while :; do :; done' >/dev/null 2>&1 &\n",
-            "setsid sh -c 'while :; do :; done' >/dev/null 2>&1 &\n",
-            "(sh -c 'while :; do :; done' >/dev/null 2>&1 &)\n",
-            "(setsid nohup sh -c 'sleep 300 & exec sleep 300' >/dev/null 2>&1 &)\n",
-            "exit 0",
+        .spawn(&sh(&format!(
+            concat!(
+                "nohup sh -c '{busy}' >/dev/null 2>&1 &\n",
+                "setsid sh -c '{busy}' >/dev/null 2>&1 &\n",
+                "(sh -c '{busy}' >/dev/null 2>&1 &)\n",
+                "(setsid nohup sh -c 'sleep 300 & exec sleep 300' >/dev/null 2>&1 &)\n",
+                "exit 0",
+            ),
+            busy = BUSY
         )))
         .expect("spawn");
     let root_pid = root.child.pid();
@@ -568,7 +575,7 @@ fn cpu_limit_throttles_busy_loops() {
     let (mut scope, _janitor) = new_scope(&adapter, "cpu", &limits);
     let started = Instant::now();
     let mut loops: Vec<Spawned> = (0..2)
-        .map(|_| scope.spawn(&sh("while :; do :; done")).expect("spawn"))
+        .map(|_| scope.spawn(&sh(BUSY)).expect("spawn"))
         .collect();
     std::thread::sleep(Duration::from_millis(1500));
     let used = scope.usage().unwrap().cpu_time_ms;
@@ -811,11 +818,14 @@ fn terminate_delivers_sigterm_to_every_member() {
     let Some(adapter) = adapter() else { return };
     let (mut scope, _janitor) = new_scope(&adapter, "term", &Limits::default());
     let spawned = scope
-        .spawn(&sh(concat!(
-            "trap 'echo parent-term; exit 0' TERM\n",
-            "sh -c 'trap \"echo child-term; exit 0\" TERM; echo ready; while :; do sleep 0.05; done' &\n",
-            "echo ready\n",
-            "while :; do sleep 0.05; done",
+        .spawn(&sh(&format!(
+            concat!(
+                "trap 'echo parent-term; exit 0' TERM\n",
+                "sh -c 'trap \"echo child-term; exit 0\" TERM; echo ready; {naps}' &\n",
+                "echo ready\n",
+                "{naps}",
+            ),
+            naps = NAPS
         )))
         .expect("spawn");
     let Spawned {
@@ -868,11 +878,8 @@ fn stop_scope_terminates_then_kills_what_ignores_it() {
     let (mut stubborn, _stubborn_janitor) =
         new_scope(&adapter, "stop-stubborn", &Limits::default());
     let spawned = stubborn
-        .spawn(&sh(concat!(
-            "trap '' TERM\n",
-            "(trap '' TERM; while :; do sleep 0.05; done) &\n",
-            "echo ready\n",
-            "while :; do sleep 0.05; done",
+        .spawn(&sh(&format!(
+            "trap '' TERM\n(trap '' TERM; {NAPS}) &\necho ready\n{NAPS}"
         )))
         .unwrap();
     let Spawned {
@@ -899,22 +906,19 @@ fn stop_scope_terminates_then_kills_what_ignores_it() {
 fn kill_by_signal_empties_a_scope_that_keeps_forking() {
     let _serial = serial();
     let Some(adapter) = adapter() else { return };
-    let limits = Limits {
-        max_processes: Some(64),
-        ..Limits::default()
-    };
-    let (mut scope, _janitor) = new_scope(&adapter, "sigkill", &limits);
-    let mut roots: Vec<Spawned> = (0..3)
+    let (mut scope, _janitor) = new_scope(&adapter, "sigkill", &Limits::default());
+    // Eight shells that each start a new process a hundred times a second.
+    let mut roots: Vec<Spawned> = (0..8)
         .map(|_| {
             scope
                 .spawn(&sh(
-                    "while :; do (sleep 300 </dev/null >/dev/null 2>&1 &); done 2>/dev/null",
+                    "i=0; while [ $i -lt 5000 ]; do sleep 0.01; i=$((i+1)); done",
                 ))
                 .expect("spawn")
         })
         .collect();
     assert!(wait_until(Duration::from_secs(5), || {
-        matches!(scope.members(), Ok(Membership::Alive(count)) if count >= 10)
+        matches!(scope.members(), Ok(Membership::Alive(count)) if count >= 12)
     }));
 
     scope.kill_by_signal().unwrap();
@@ -922,8 +926,12 @@ fn kill_by_signal_empties_a_scope_that_keeps_forking() {
     if scope.path().join("cgroup.freeze").exists() {
         assert_eq!(control(&scope, "cgroup.freeze"), "0");
     }
+    // Every shell was still looping when it was killed.
     for spawned in &mut roots {
-        wait_exit(spawned, Duration::from_secs(5));
+        assert_eq!(
+            wait_exit(spawned, Duration::from_secs(5)).signal,
+            Some(libc::SIGKILL)
+        );
     }
     destroy(scope).unwrap();
 }
@@ -1380,4 +1388,32 @@ fn an_unprivileged_worker_uses_a_cgroup_it_owns() {
         describe(&output)
     );
     assert!(!unit.0.join("bella-helper").exists());
+}
+
+/// Shells block signals while they fork, so a SIGTERM that arrives then is
+/// acted on only after the child exists, and the child never saw it. Each
+/// round catches a shell somewhere in a run of forks.
+#[test]
+fn terminate_reaches_children_forked_while_the_signal_was_pending() {
+    let _serial = serial();
+    let Some(adapter) = adapter() else { return };
+    let script = format!("{}exec sleep 300", "sleep 300 & ".repeat(40));
+    for round in 0..40u64 {
+        let (mut scope, _janitor) = new_scope(&adapter, "forking", &Limits::default());
+        let mut root = scope.spawn(&sh(&script)).unwrap();
+        std::thread::sleep(Duration::from_micros(round * 150));
+        scope.terminate().unwrap();
+        assert!(
+            wait_until(Duration::from_secs(2), || {
+                matches!(scope.members(), Ok(Membership::Empty))
+            }),
+            "round {round}: {:?} never received SIGTERM",
+            member_pids(&scope)
+        );
+        assert_eq!(
+            wait_exit(&mut root, Duration::from_secs(5)).signal,
+            Some(libc::SIGTERM)
+        );
+        destroy(scope).unwrap();
+    }
 }

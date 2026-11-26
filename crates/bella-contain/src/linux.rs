@@ -13,13 +13,16 @@
 //! a pure cgroup v2 hierarchy, is writable, and was handed over to the
 //! worker:
 //!
-//! * a systemd service or user unit with `Delegate=yes` (systemd marks the
-//!   unit's cgroup with a `delegate` attribute and, for an unprivileged
-//!   unit, makes the worker's user its owner), or
+//! * a systemd unit with `Delegate=yes`, recognised by the `delegate`
+//!   attribute systemd puts on the unit's cgroup,
+//! * for a worker that is not root, a cgroup owned by the worker's user,
+//!   which is what systemd produces for `Delegate=yes` with `User=` and for
+//!   the units of a user's own systemd instance, or
 //! * the root of a private cgroup namespace, as in a container.
 //!
-//! cgroup v1, the hybrid layout, a read-only mount and a cgroup that some
-//! other manager still owns are all reported as
+//! A root worker can write to any cgroup, so for root only the attribute or
+//! a namespace root counts. cgroup v1, the hybrid layout, a read-only mount
+//! and a cgroup that some other manager still owns are all reported as
 //! [`ContainError::Unavailable`] with the reason.
 //!
 //! # What the adapter changes
@@ -43,10 +46,16 @@
 //!   Priority against the rest of the machine is set on the worker's unit
 //!   (`CPUWeight=`), which the adapter does not own.
 //! * `cgroup.kill` needs Linux 5.14. Older kernels are handled by freezing
-//!   the scope and signalling its members; signals are sent through pidfds
-//!   (Linux 5.3) after checking the target still belongs to the scope, so a
-//!   reused PID is never signalled. Before 5.3 that check and the signal are
-//!   two steps and a narrow reuse window remains.
+//!   the scope (`cgroup.freeze`, Linux 5.2) and sending `SIGKILL` to its
+//!   members until none is left.
+//! * `SIGTERM` is a request, not a guarantee: a member that blocks or
+//!   ignores it can keep forking. [`Scope::terminate`] signals members that
+//!   appear shortly after their parent was signalled, but only `kill` is
+//!   certain to reach everything.
+//! * Signals go through pidfds (Linux 5.3) after checking the target still
+//!   belongs to the scope, so a reused PID is never signalled. Before 5.3
+//!   that check and the signal are two steps and a narrow reuse window
+//!   remains.
 //! * `memory.peak` needs Linux 5.19. Without it the reported peak is the
 //!   highest `memory.current` seen by calls to [`Scope::usage`] on the same
 //!   scope object, which can miss a spike between samples.
@@ -88,6 +97,12 @@ const CPU_WEIGHT_LOW: &str = "10";
 const CGROUP2_SUPER_MAGIC: i64 = 0x6367_7270;
 const TMPFS_MAGIC: i64 = 0x0102_1994;
 const MAX_NAME_LEN: usize = 128;
+/// A shell loop that burns CPU for a while and then ends on its own, so a
+/// self-test that fails to kill it leaves nothing running for long.
+const BUSY_LOOP: &str = "i=0; while [ \"$i\" -lt 30000000 ]; do i=$((i+1)); done";
+/// How long `terminate` keeps looking for members that were forked after
+/// their parent was signalled.
+const TERMINATE_WINDOW: Duration = Duration::from_millis(100);
 /// Flags word of the pidfd system calls; none are used.
 const NO_FLAGS: libc::c_uint = 0;
 
@@ -368,7 +383,7 @@ impl CgroupV2 {
         };
         self.with_scope(name, &limits, |scope| {
             let mut root = scope
-                .spawn(&shell("while :; do :; done"))
+                .spawn(&shell(BUSY_LOOP))
                 .map_err(|error| error.to_string())?;
             let stat = scope.path.join("cpu.stat");
             let throttled = poll_until(Duration::from_secs(3), || {
@@ -548,19 +563,25 @@ impl CgroupScope {
     fn kill_members(&self) -> Result<(), ContainError> {
         let start = Instant::now();
         loop {
-            let pids = match self.pids() {
-                Ok(pids) => pids,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-                Err(error) => return Err(error.into()),
-            };
-            if pids.is_empty() || start.elapsed() >= Duration::from_secs(2) {
+            if self.signal_all(libc::SIGKILL)? == 0 || start.elapsed() >= Duration::from_secs(2) {
                 return Ok(());
-            }
-            for pid in pids {
-                self.signal_member(pid, libc::SIGKILL)?;
             }
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// Send `signal` to every current member and return how many were
+    /// listed. A scope whose cgroup is gone has none.
+    fn signal_all(&self, signal: libc::c_int) -> Result<usize, ContainError> {
+        let pids = match self.pids() {
+            Ok(pids) => pids,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error.into()),
+        };
+        for pid in &pids {
+            self.signal_member(*pid, signal)?;
+        }
+        Ok(pids.len())
     }
 
     /// Ask the kernel to freeze the scope and wait briefly for it to report
@@ -886,18 +907,42 @@ impl Scope for CgroupScope {
         self.apply(limits)
     }
 
-    /// One pass of `SIGTERM` over the current members. A process forked
-    /// during the pass may be missed; `kill` has no such gap.
+    /// `SIGTERM` to every member, each exactly once.
+    ///
+    /// A process can be forked by a member that has the signal queued but
+    /// has not acted on it yet: shells and `posix_spawn` block signals while
+    /// they fork, and the child does not inherit what is pending. The scope
+    /// is therefore re-read every few milliseconds and members that appeared
+    /// since are signalled too, until three reads in a row find nobody new
+    /// or [`TERMINATE_WINDOW`] has passed. A process created after that by a
+    /// member that ignores the signal is not asked; `kill` reaches it.
     fn terminate(&mut self) -> Result<(), ContainError> {
-        let pids = match self.pids() {
-            Ok(pids) => pids,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error.into()),
-        };
-        for pid in pids {
-            self.signal_member(pid, libc::SIGTERM)?;
+        let start = Instant::now();
+        let mut signalled: Vec<u32> = Vec::new();
+        let mut quiet = 0;
+        loop {
+            let pids = match self.pids() {
+                Ok(pids) => pids,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error.into()),
+            };
+            if pids.is_empty() {
+                return Ok(());
+            }
+            let mut found_new = false;
+            for pid in pids {
+                if !signalled.contains(&pid) {
+                    self.signal_member(pid, libc::SIGTERM)?;
+                    signalled.push(pid);
+                    found_new = true;
+                }
+            }
+            quiet = if found_new { 0 } else { quiet + 1 };
+            if quiet >= 3 || start.elapsed() >= TERMINATE_WINDOW {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(2));
         }
-        Ok(())
     }
 
     /// `cgroup.kill` kills the scope and every child cgroup atomically,
