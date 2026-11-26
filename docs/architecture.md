@@ -373,6 +373,88 @@ API and the event stream. Shows measured use, reservations, external
 activity and the protected foreground share as separate bars, and the
 enforcement strength per machine. Nothing beyond those views.
 
+### 6.15 bella-client
+
+Typed async client for every route in `bella_core::api`, built on the
+pinned TLS configuration from `bella-net`.
+
+* One method per route, returning the `bella_core::api` type or an
+  `ApiError`. Transport failures are distinct from API errors.
+* `events(after)` yields `EventRecord`s from the event stream and
+  reconnects from the last sequence it saw.
+* `HttpObjectStore` implements `ObjectStore`: it asks which digests are
+  missing before uploading, sends and receives zstd-compressed bodies, and
+  verifies every download against its digest. It is called from blocking
+  threads.
+* Retries are bounded, with exponential backoff and jitter, and only for
+  requests that are safe to repeat. `submit_job` always carries an
+  idempotency key.
+
+### 6.16 bella-controller
+
+One process: HTTP API, worker hub, dispatch loop, object store, embedded
+dashboard. `Controller::start(config)` is a library call so tests run it
+in-process on port 0.
+
+* Data directory: `ledger.sqlite`, `objects/`, `logs/`, `tls/`, and an
+  admin token created on first start and written to a private file.
+* Every route authenticates a bearer token through the ledger and checks
+  the role. Enrollment attempts are rate limited.
+* Snapshot registration validates the manifest, confirms every referenced
+  object is stored, stores the manifest itself as an object, then registers.
+* Worker hub: `Hello` → `ledger.reconcile` → `Welcome` + `Reconcile`. No
+  offer goes to a machine before its reconcile. Events and logs are
+  acknowledged only after they are durable. Control messages are never
+  queued behind log acknowledgements.
+* Dispatch: on a tick and on change, build a `FleetState` from the ledger,
+  call `bella_scheduler::schedule`, and for each planned offer run the
+  handshake of §3. Sweeps: offer expiry, authority renewal, stale and
+  unreachable marking, cancellation fan-out, environment lease expiry,
+  retries, object-store garbage collection from `ledger.live_digests()`.
+* A start bumps the epoch. A machine is excluded from scheduling until it
+  has reconnected and reconciled.
+* Covers end to end: A01, A02, A12, A13, A14, A15, A21, A22, A37, A59, A60, A61.
+
+### 6.17 bella-worker
+
+One process per physical machine.
+
+* `enroll`: probe, exchange the pairing code for a machine id and token,
+  store the token in a private file and the rest in the journal.
+* Connection loop with backoff and jitter; `Hello` carries the journal's
+  reports; verdicts are applied before anything else.
+* Protection loop every second: sample, compute the budget, apply actions.
+  It runs whether or not the controller is reachable.
+* Offer: check epoch and policy revision, `bella_protect::admit`, journal
+  the hold, reply. Start: `journal.authorize_start`; only `Fresh` launches.
+* Runner per attempt: fresh workspace, scope created and journaled before
+  the first spawn, snapshot materialized through a local object cache,
+  steps in dependency order (tasks and tests one at a time, services in the
+  background with readiness probes), logs spooled to disk and streamed with
+  offsets and a truncation marker at the allowance, artifacts uploaded then
+  announced, outcome reported, cleanup steps run, scope stopped and
+  verified empty, workspace removed, release proof sent. Anything that
+  cannot be verified is quarantined.
+* Steps get a minimal environment: system essentials, `BELLA_*` variables,
+  then the recipe's and the step's. Nothing else from the worker leaks in.
+* Authority: past `valid_until` plus the permitted disconnected time, or
+  past the hard deadline, the worker stops the attempt on its own.
+* Restart: attempts from an earlier boot are lost and released once their
+  workspace is gone. Attempts from this boot are re-adopted by scope and,
+  in v0.1, stopped and reported as interrupted, because their output pipes
+  cannot be recovered.
+* Local pause, resume and drain are written to the journal by the CLI and
+  picked up by the running worker, so they work offline.
+* Covers end to end: A05, A07, A08, A11, A16, A17, A19, A24, A25, A47, A66.
+
+### 6.18 bella-cli
+
+The `bella` binary. `bella controller …`, `bella worker …`, `bella login`,
+`submit`, `plan`, `jobs`, `job`, `wait`, `logs`, `cancel`, `artifacts`,
+`explain`, `env …`, `fleet`, `queue`, `machine …`, `project …`, `token …`,
+`mcp`. Output is plain text by default and JSON with `--json`. A failed job
+makes `submit --wait` exit non-zero; a wait timeout never cancels.
+
 ## 7. Timing defaults
 
 See `bella_core::defaults`. Protection loop 1 s, heartbeat 5 s, stale 15 s,

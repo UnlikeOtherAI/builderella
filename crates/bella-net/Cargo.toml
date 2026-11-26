@@ -10,9 +10,25 @@ repository.workspace = true
 [dependencies]
 bella-core.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+# The `ring` provider is selected explicitly. The default `aws-lc-rs`
+# provider needs CMake and NASM on Windows and does not build on every
+# supported macOS, so default features stay off here and in every crate that
+# enables rustls features.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring", "zeroize"] }
+time = { version = "0.3", default-features = false }
+getrandom = "0.4"
+base64 = "0.23"
+subtle = { version = "2", default-features = false }
 
 [dev-dependencies]
 tempfile.workspace = true
+tokio.workspace = true
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 
 [lints]
 workspace = true
