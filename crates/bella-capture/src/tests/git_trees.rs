@@ -614,3 +614,71 @@ fn untracked_files_are_left_out_when_the_policy_says_so() {
     assert!(result.excluded_secrets.is_empty());
     assert!(!git_meta(&result).dirty);
 }
+
+/// A root that the enclosing repository ignores (a scratch project inside
+/// a larger checkout, a project under a home-directory repository) has no
+/// files as far as that repository is concerned. It is captured as a plain
+/// directory instead of as an empty snapshot, and the result says so.
+#[test]
+fn root_ignored_by_the_enclosing_repository_is_walked_as_a_plain_directory() {
+    let repo = Repo::new();
+    repo.write(".gitignore", b"scratch/\n");
+    repo.write("tracked.txt", b"t");
+    repo.commit_all("init");
+    repo.write("scratch/proj/src/a.c", b"int a;");
+    repo.write("scratch/proj/.env", b"TOKEN=1");
+
+    let store = MemStore::new();
+    let result = snap(
+        &repo.path("scratch/proj"),
+        &CapturePolicy::default(),
+        &store,
+    )
+    .unwrap();
+    assert_eq!(paths(&result), ["src/a.c"]);
+    assert_eq!(result.excluded_secrets, [".env"]);
+    assert_eq!(result.meta.roots[0].git, None);
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("ignored by the git repository")),
+        "{:?}",
+        result.warnings
+    );
+}
+
+/// A directory junction is a link with an absolute target. Git for Windows
+/// lists the files below it as if it were a directory; the capture does
+/// not follow links, so it fails and names the junction instead of
+/// leaving those files out.
+#[cfg(windows)]
+#[test]
+fn directory_junction_fails_naming_the_link() {
+    let repo = Repo::new();
+    repo.write("real/f.txt", b"f");
+    repo.commit_all("init");
+    let made = Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(repo.path("alias"))
+        .arg(repo.path("real"))
+        .output();
+    if !made.is_ok_and(|output| output.status.success()) {
+        eprintln!("skipped: could not create a directory junction");
+        return;
+    }
+    let store = MemStore::new();
+    let err = snap(&repo.dir, &CapturePolicy::default(), &store).unwrap_err();
+    assert!(
+        matches!(&err, CaptureError::Symlink { path, .. } if path == "alias"),
+        "{err}"
+    );
+    let policy = CapturePolicy {
+        exclude: vec!["alias".into()],
+        ..CapturePolicy::default()
+    };
+    assert_eq!(
+        paths(&snap(&repo.dir, &policy, &store).unwrap()),
+        ["real/f.txt"]
+    );
+}

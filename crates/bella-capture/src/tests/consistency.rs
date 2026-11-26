@@ -349,7 +349,7 @@ fn a35_multiple_roots_are_captured_under_one_barrier() {
     let shared = app.sibling("shared");
     write(&shared.join("lib/util.rs"), b"pub fn util() {}");
     write(&shared.join(".env"), b"TOKEN=1");
-    let shared_is_plain = !crate::git::is_work_tree(&shared).unwrap();
+    let shared_is_plain = crate::git::root_kind(&shared).unwrap() == crate::git::RootKind::Plain;
 
     let roots = [
         RootSpec::mounted(&shared, "libs/shared"),

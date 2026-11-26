@@ -16,7 +16,14 @@
 //!   path. Git is only ever queried; no command that writes to a repository
 //!   is run, and `.git` is never captured.
 //! * **Other directories**: every file below the root. Symlinks are
-//!   recorded, never followed.
+//!   recorded, never followed. A root that an enclosing repository ignores
+//!   is captured this way too, with a warning: that repository's rules
+//!   would select nothing.
+//! * Links are never followed. A relative link that stays inside its root
+//!   is recorded as a link; an absolute or escaping one fails the capture,
+//!   as does a directory link (a Windows junction) that git lists files
+//!   below.
+//! * Sockets, FIFOs and devices are left out with a warning.
 //! * Ignored files only when `include_ignored` declares them.
 //! * Empty directories are **not** recorded. Git cannot represent them, so
 //!   recording them only for untracked directories would make the same
@@ -43,7 +50,10 @@
 //! number of times. After the last file the tree is listed and examined
 //! again, and a difference restarts the capture a bounded number of times.
 //! That detects mutation, it does not prevent it: without a
-//! [`CaptureBarrier`] the result is [`Consistency::BestEffort`].
+//! [`CaptureBarrier`] the result is [`Consistency::BestEffort`]. A change
+//! is recognised by size, modification time and, on Unix, inode and
+//! status-change time; a rewrite that preserves all of them on a
+//! filesystem with coarse timestamps goes unnoticed.
 
 mod engine;
 mod enumerate;

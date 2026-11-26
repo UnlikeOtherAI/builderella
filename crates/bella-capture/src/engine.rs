@@ -1,6 +1,6 @@
 //! The capture itself: list, read once, verify, describe.
 
-use crate::enumerate::{Candidate, Class, Listing, Rules, enumerate, first_difference};
+use crate::enumerate::{Candidate, Class, Listing, Rules, enumerate, first_difference, link_above};
 use crate::error::CaptureError;
 use crate::git;
 use crate::read::{DirCache, Observed, Sig, SpoolError, Spooled, observe};
@@ -277,7 +277,10 @@ impl Reader<'_> {
         for attempt in 1..=READ_ATTEMPTS {
             let before = observe(self.root, candidate, &mut self.dirs).map_err(io_error)?;
             let sig = match &before {
-                Observed::Missing | Observed::Dir => return Ok((None, before)),
+                Observed::Missing | Observed::Dir => {
+                    self.refuse_path_behind_link(candidate)?;
+                    return Ok((None, before));
+                }
                 Observed::Other => {
                     self.warnings.push(format!(
                         "`{shown}` is not a regular file, directory or symlink and was not captured"
@@ -344,6 +347,29 @@ impl Reader<'_> {
             path: shown,
             attempts: READ_ATTEMPTS,
         })
+    }
+
+    /// A path that git lists although a directory above it is a link (a
+    /// junction on Windows) cannot be captured: links are not followed, and
+    /// leaving the files out without a word would break the build that
+    /// needs them. A tracked path in that position is one git itself
+    /// reports as deleted where links are real symlinks, so it is absent.
+    fn refuse_path_behind_link(&self, candidate: &Candidate) -> Result<(), CaptureError> {
+        if candidate.class == Class::Tracked && cfg!(unix) {
+            return Ok(());
+        }
+        match link_above(self.root, &candidate.rel) {
+            Some((dir, target)) => Err(CaptureError::Symlink {
+                path: format!("{}{dir}", self.shown_prefix),
+                target: target.to_string_lossy().into_owned(),
+                reason: format!(
+                    "`{}` is listed below this directory link, and links are not followed; \
+                     exclude the link or replace it with a directory",
+                    candidate.rel
+                ),
+            }),
+            None => Ok(()),
+        }
     }
 
     /// Turn one stable read into a manifest entry, storing its object.

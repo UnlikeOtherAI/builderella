@@ -112,10 +112,18 @@ pub(crate) fn enumerate(
         excluded_secrets: Vec::new(),
         warnings: Vec::new(),
     };
-    let git = git::is_work_tree(root)?;
+    let kind = git::root_kind(root)?;
+    let git = kind == git::RootKind::WorkTree;
     if git {
         builder.list_repo(root.to_path_buf(), String::new(), 0)?;
     } else {
+        if kind == git::RootKind::IgnoredByEnclosingTree {
+            builder.warnings.push(format!(
+                "`{}` is ignored by the git repository that contains it; \
+                 it was captured as a plain directory, without ignore rules",
+                root.display()
+            ));
+        }
         builder.walk(root.to_path_buf(), String::new(), Class::Plain, None)?;
     }
     builder.excluded_secrets.sort();
@@ -417,6 +425,23 @@ impl Builder<'_> {
     }
 }
 
+/// The first directory above `rel` that is a link instead of a directory,
+/// with the link's target.
+pub(crate) fn link_above(root: &Path, rel: &str) -> Option<(String, PathBuf)> {
+    for (end, _) in rel.match_indices('/') {
+        let dir = root.join(&rel[..end]);
+        let kind = fs::symlink_metadata(&dir).ok()?.file_type();
+        if kind.is_symlink() {
+            let target = fs::read_link(&dir).unwrap_or_default();
+            return Some((rel[..end].to_string(), target));
+        }
+        if !kind.is_dir() {
+            return None;
+        }
+    }
+    None
+}
+
 /// First path at which two listings of the same root disagree.
 pub(crate) fn first_difference(before: &[Candidate], after: &[Candidate]) -> Option<String> {
     let key = |c: &Candidate| (c.class, c.index_mode);
@@ -431,5 +456,78 @@ pub(crate) fn first_difference(before: &[Candidate], after: &[Candidate]) -> Opt
             }
             (Some(x), Some(y)) => return Some(x.rel.as_str().min(y.rel.as_str()).to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(rel: &str, class: Class, index_mode: Option<u32>) -> Candidate {
+        Candidate {
+            rel: rel.into(),
+            abs: PathBuf::from(rel),
+            class,
+            index_mode,
+            repo: None,
+            prefix_len: 0,
+            secret: None,
+        }
+    }
+
+    /// A name git reports that is not valid UTF-8 is an error that shows
+    /// the name, with the path it was found under.
+    #[test]
+    fn undecodable_name_from_git_is_an_error_with_the_path() {
+        let rules = Rules::compile(&CapturePolicy::default()).unwrap();
+        let builder = Builder {
+            rules: &rules,
+            shown_prefix: "app/",
+            found: BTreeMap::new(),
+            repos: Vec::new(),
+            excluded_secrets: Vec::new(),
+            warnings: Vec::new(),
+        };
+        assert_eq!(
+            builder.utf8("vendor/", "ünï.txt".as_bytes()).unwrap(),
+            "ünï.txt"
+        );
+        match builder.utf8("vendor/", b"bad-\xff-name.txt") {
+            Err(CaptureError::NonUtf8Path { path }) => {
+                assert_eq!(path, "app/vendor/bad-\u{fffd}-name.txt");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        assert!(builder.rel("", "ok/path").is_ok());
+        for bad in ["../up", "a//b", "/abs", ""] {
+            assert!(builder.rel("", bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn listings_are_compared_by_path_class_and_mode() {
+        let a = candidate("a", Class::Tracked, Some(0o100644));
+        let b = candidate("b", Class::Untracked, None);
+        let c = candidate("c", Class::Tracked, Some(0o100644));
+        let same = [a.clone(), b.clone()];
+        assert_eq!(first_difference(&same, &same), None);
+        assert_eq!(
+            first_difference(&[a.clone(), b.clone()], &[a.clone()]),
+            Some("b".into())
+        );
+        assert_eq!(
+            first_difference(&[a.clone(), c.clone()], &[a.clone(), b.clone(), c.clone()]),
+            Some("b".into())
+        );
+        let executable = candidate("a", Class::Tracked, Some(0o100755));
+        assert_eq!(
+            first_difference(&[a.clone()], &[executable]),
+            Some("a".into())
+        );
+        let now_tracked = candidate("b", Class::Tracked, Some(0o100644));
+        assert_eq!(
+            first_difference(&[a.clone(), b], &[a, now_tracked]),
+            Some("b".into())
+        );
     }
 }

@@ -117,20 +117,43 @@ fn has_git_ancestor(dir: &Path) -> bool {
         .any(|a| a.join(".git").symlink_metadata().is_ok())
 }
 
-/// Whether `dir` is inside a git working tree.
+/// How a source root relates to git.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RootKind {
+    /// Not inside a git working tree.
+    Plain,
+    /// A working tree or a directory git manages inside one.
+    WorkTree,
+    /// Inside a working tree whose ignore rules cover the root itself. Git
+    /// would list nothing there, so its rules cannot select the files.
+    IgnoredByEnclosingTree,
+}
+
+/// Decide how `dir` is listed.
 ///
 /// A directory with no `.git` above it is a plain directory even when git is
 /// not installed. A directory that does have one must be readable by git:
 /// falling back to a plain walk there would ignore the repository's ignore
 /// rules.
-pub(crate) fn is_work_tree(dir: &Path) -> Result<bool, CaptureError> {
-    let args = ["rev-parse", "--show-toplevel"];
-    match attempt(dir, &args, None) {
-        Ok(done) if done.ok => Ok(true),
-        Ok(done) if has_git_ancestor(dir) => Err(failed(dir, &args, &done)),
-        Err(error) if has_git_ancestor(dir) => Err(unavailable(dir, error)),
-        Ok(_) | Err(_) => Ok(false),
+pub(crate) fn root_kind(dir: &Path) -> Result<RootKind, CaptureError> {
+    let args = ["rev-parse", "--show-toplevel", "--show-prefix"];
+    let done = match attempt(dir, &args, None) {
+        Ok(done) if done.ok => done,
+        Ok(done) if has_git_ancestor(dir) => return Err(failed(dir, &args, &done)),
+        Err(error) if has_git_ancestor(dir) => return Err(unavailable(dir, error)),
+        Ok(_) | Err(_) => return Ok(RootKind::Plain),
+    };
+    // Two lines: the top level, then the root's path below it (empty at
+    // the top level, which cannot be ignored by its own repository).
+    let below_top_level = done
+        .stdout
+        .split(|b| *b == b'\n')
+        .nth(1)
+        .is_some_and(|prefix| !prefix.iter().all(u8::is_ascii_whitespace));
+    if below_top_level && query(dir, &["check-ignore", "--quiet", "."])?.ok {
+        return Ok(RootKind::IgnoredByEnclosingTree);
     }
+    Ok(RootKind::WorkTree)
 }
 
 /// A boolean configuration value, or `None` when it is unset.
