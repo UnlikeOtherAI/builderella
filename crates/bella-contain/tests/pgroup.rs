@@ -450,11 +450,13 @@ fn a16_stale_identity_never_signals_the_process_now_holding_the_pid() {
             pid: bystander.pid(),
             pgid: bystander.pid(),
             start_time: 1,
+            tag_only: false,
         },
         ProcessRecord {
             pid: own_pid,
             pgid: pgid_of(own_pid),
             start_time: 1,
+            tag_only: false,
         },
     ];
 
@@ -496,6 +498,76 @@ fn a16_stale_identity_never_signals_the_process_now_holding_the_pid() {
     );
     std::thread::sleep(Duration::from_millis(100));
     assert!(bystander.is_running(), "an unrelated process was signalled");
+}
+
+/// A16: the scope tag marks one process, not its surroundings. A program
+/// that was started elsewhere with a copy of the tag is treated as a member,
+/// but the unrelated processes sharing its session are never signalled.
+#[test]
+fn a16_a_tag_does_not_license_signalling_the_session_around_it() {
+    use std::os::unix::process::CommandExt;
+
+    let mut held = Held::new("a16-tag");
+    let name = held.identity().name;
+
+    // An unrelated session: a shell, a tagged helper it starts, and itself.
+    let mut command = std::process::Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg(
+            r#"BELLA_SCOPE="$NAME" BELLA_TEST_ROLE=sleep "$EXE" helper_process --exact --nocapture --test-threads=1 >/dev/null 2>&1 & echo "PID $!"; sleep 120"#,
+        )
+        .env("NAME", &name)
+        .env("EXE", std::env::current_exe().unwrap())
+        .stdout(std::process::Stdio::piped());
+    // SAFETY: setsid is async-signal-safe and is the only call made
+    // between fork and exec.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut session = SessionGuard(command.spawn().unwrap());
+    let mut line = String::new();
+    BufReader::new(session.0.stdout.as_mut().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let tagged: i32 = line.trim().strip_prefix("PID ").unwrap().parse().unwrap();
+
+    wait_until("the tagged helper to be found", WAIT, || alive(&*held) == 1);
+    let observed = detail_of(&held.identity()).observed;
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed[0].pid, tagged);
+    assert!(observed[0].tag_only);
+
+    held.terminate().unwrap();
+    held.kill().unwrap();
+    assert_eq!(held.members().unwrap(), Membership::Empty);
+    wait_until("the tagged helper to die", WAIT, || !is_running(tagged));
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(
+        session.0.try_wait().unwrap().is_none(),
+        "the shell that shares a session with the tagged process was signalled"
+    );
+}
+
+/// A shell started as a session leader outside every scope; the whole
+/// session's process group is killed when the test ends.
+struct SessionGuard(std::process::Child);
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(None)) {
+            let pid = i32::try_from(self.0.id()).unwrap();
+            // SAFETY: killpg only sends a signal; the child is unreaped, so
+            // its PID still names the process group it created.
+            unsafe { libc::killpg(pid, libc::SIGKILL) };
+        }
+        let _ = self.0.wait();
+    }
 }
 
 /// A worker that dies between `spawn` and journaling the new identity has

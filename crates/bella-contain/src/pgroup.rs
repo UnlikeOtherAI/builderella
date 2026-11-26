@@ -23,7 +23,10 @@
 //!    scope;
 //! 3. every process whose parent is a member;
 //! 4. every process whose environment still carries the scope's
-//!    `BELLA_SCOPE` value, where the OS lets that be read.
+//!    `BELLA_SCOPE` value, where the OS lets that be read, and the children
+//!    of such a process. A process found only this way does not vouch for
+//!    its session or group: the variable can be copied into a program that
+//!    was started elsewhere, and that program's session is not the scope's.
 //!
 //! A leader that has exited but has not been reaped keeps its PID, and with
 //! it the id of its session and group, reserved. Its session therefore stays
@@ -52,8 +55,8 @@
 //! A PID or process group id alone is never used to signal. A group is
 //! signalled only while its unreaped leader pins the id, or after a member
 //! recorded with its start time was re-read with the same start time and
-//! group immediately before the call. A process outside every such group is
-//! signalled by PID after the same re-read. The check and the signal are two
+//! group immediately before the call. A process found only by its tag is
+//! signalled by PID after the same re-read, never through its group. The check and the signal are two
 //! system calls; the remaining window would need the whole PID space to wrap
 //! between them.
 //!
@@ -122,6 +125,14 @@ pub struct ProcessRecord {
     /// clock ticks since boot on Linux. `0` means unknown and never matches
     /// a running process.
     pub start_time: u64,
+    /// Found only by its `BELLA_SCOPE` value (or as the child of such a
+    /// process), so its session and group are not taken as the scope's.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub tag_only: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// The JSON document stored in [`ScopeIdentity::detail`].
@@ -213,10 +224,10 @@ impl Containment for ProcessGroups {
                  spike between samples is missed."
                     .into(),
                 format!(
-                    "process_tree: advisory. Members are found by process group, parent links \
-                     and the {SCOPE_ENV} environment value. A descendant that leaves its group, \
-                     drops {SCOPE_ENV} and loses its parent between two observations is not \
-                     tracked.{}",
+                    "process_tree: advisory. Members are found by session and process group, \
+                     parent links and the {SCOPE_ENV} environment value. A descendant that \
+                     leaves its session, drops {SCOPE_ENV} and loses its parent between two \
+                     observations is not tracked.{}",
                     sys::VISIBILITY_NOTE
                 ),
                 "process_count: none. max_processes is recorded and not enforced; RLIMIT_NPROC \
@@ -416,8 +427,16 @@ struct State {
     env_buf: Vec<u8>,
 }
 
+/// Not a member.
+const OUTSIDE: u8 = 0;
+/// A member found by the scope tag, or the child of one.
+const BY_TAG: u8 = 1;
+/// A member known to be in a session the scope created.
+const IN_SESSION: u8 = 2;
+
 /// Breadth-first search over one process table: a member brings in its
-/// session, its process group and its children.
+/// children and, unless it was found only by the tag, its session and its
+/// process group.
 struct Walk<'a> {
     procs: &'a [ProcInfo],
     by_parent: &'a HashMap<i32, Vec<usize>>,
@@ -426,7 +445,8 @@ struct Walk<'a> {
     own_pid: i32,
     own_group: i32,
     own_session: i32,
-    member: Vec<bool>,
+    /// Per process: [`OUTSIDE`], [`BY_TAG`] or [`IN_SESSION`].
+    level: Vec<u8>,
     trusted: BTreeSet<i32>,
     trusted_sessions: BTreeSet<i32>,
     queue: Vec<usize>,
@@ -434,13 +454,17 @@ struct Walk<'a> {
 
 impl Walk<'_> {
     /// PID 0, PID 1 and this process are never members.
-    fn add(&mut self, index: usize) {
+    fn add(&mut self, index: usize, level: u8) {
         let pid = self.procs[index].pid;
-        if self.member[index] || pid <= 1 || pid == self.own_pid {
+        if self.level[index] >= level || pid <= 1 || pid == self.own_pid {
             return;
         }
-        self.member[index] = true;
+        self.level[index] = level;
         self.queue.push(index);
+    }
+
+    fn is_member(&self, index: usize) -> bool {
+        self.level[index] != OUTSIDE
     }
 
     /// Group 0, group 1 and this process's own group are never trusted.
@@ -451,7 +475,7 @@ impl Walk<'_> {
         let by_group = self.by_group;
         if let Some(indices) = by_group.get(&pgid) {
             for &index in indices {
-                self.add(index);
+                self.add(index, IN_SESSION);
             }
         }
     }
@@ -465,7 +489,7 @@ impl Walk<'_> {
         let by_session = self.by_session;
         if let Some(indices) = by_session.get(&sid) {
             for &index in indices {
-                self.add(index);
+                self.add(index, IN_SESSION);
             }
         }
     }
@@ -473,8 +497,11 @@ impl Walk<'_> {
     fn run(&mut self) {
         while let Some(index) = self.queue.pop() {
             let proc = self.procs[index];
-            self.trust_session(proc.sid);
-            self.trust(proc.pgid);
+            let level = self.level[index];
+            if level == IN_SESSION {
+                self.trust_session(proc.sid);
+                self.trust(proc.pgid);
+            }
             if proc.zombie {
                 continue;
             }
@@ -485,7 +512,7 @@ impl Walk<'_> {
                     // process with this parent PID belongs to a previous
                     // owner of the PID.
                     if self.procs[child].start_time >= proc.start_time {
-                        self.add(child);
+                        self.add(child, level);
                     }
                 }
             }
@@ -548,7 +575,7 @@ impl State {
             own_pid,
             own_group,
             own_session,
-            member: vec![false; procs.len()],
+            level: vec![OUTSIDE; procs.len()],
             trusted: BTreeSet::new(),
             trusted_sessions: BTreeSet::new(),
             queue: Vec::new(),
@@ -565,13 +592,20 @@ impl State {
             if let Some(&index) = by_pid.get(&known.rec.pid)
                 && procs[index].start_time == known.rec.start_time
             {
-                walk.add(index);
+                walk.add(
+                    index,
+                    if known.rec.tag_only {
+                        BY_TAG
+                    } else {
+                        IN_SESSION
+                    },
+                );
             }
         }
         walk.run();
 
         for (index, proc) in procs.iter().enumerate() {
-            if walk.member[index] || proc.zombie || proc.pid <= 1 || proc.pid == own_pid {
+            if walk.is_member(index) || proc.zombie || proc.pid <= 1 || proc.pid == own_pid {
                 continue;
             }
             let cached = self
@@ -599,7 +633,7 @@ impl State {
                 },
             };
             if tagged {
-                walk.add(index);
+                walk.add(index, BY_TAG);
             }
         }
         walk.run();
@@ -615,13 +649,14 @@ impl State {
         let mut next: BTreeMap<i32, Known> = BTreeMap::new();
         let mut lifetime_peak = 0u64;
         for (index, proc) in procs.iter().enumerate() {
-            if !walk.member[index] {
+            if !walk.is_member(index) {
                 continue;
             }
             let rec = ProcessRecord {
                 pid: proc.pid,
                 pgid: proc.pgid,
                 start_time: proc.start_time,
+                tag_only: walk.level[index] == BY_TAG,
             };
             let mut cpu_ns = self
                 .known
@@ -703,7 +738,7 @@ impl State {
         // owns; never wait for "any child", which would take exit statuses
         // that belong to someone else.
         for (index, proc) in procs.iter().enumerate() {
-            let own_zombie = walk.member[index] && proc.zombie && proc.ppid == own_pid;
+            let own_zombie = walk.is_member(index) && proc.zombie && proc.ppid == own_pid;
             if own_zombie && !owned_children().contains(&proc.pid) {
                 let mut status = 0;
                 // SAFETY: `status` is a valid out-pointer and WNOHANG makes
@@ -963,6 +998,7 @@ impl Scope for PgScope {
             pid,
             pgid: pid,
             start_time: info.map_or(0, |info| info.start_time),
+            tag_only: false,
         };
         if let Some(info) = info {
             state.known.insert(
@@ -1888,14 +1924,20 @@ mod tests {
                 pid: 10,
                 pgid: 10,
                 start_time: 77,
+                tag_only: false,
             }],
             observed: vec![ProcessRecord {
                 pid: 11,
                 pgid: 10,
                 start_time: 78,
+                tag_only: true,
             }],
         };
         let json = serde_json::to_string(&detail).unwrap();
+        assert_eq!(
+            json,
+            r#"{"leaders":[{"pid":10,"pgid":10,"start_time":77}],"observed":[{"pid":11,"pgid":10,"start_time":78,"tag_only":true}]}"#
+        );
         assert_eq!(serde_json::from_str::<ScopeDetail>(&json).unwrap(), detail);
         assert_eq!(
             serde_json::from_str::<ScopeDetail>("{}").unwrap(),
@@ -1916,6 +1958,7 @@ mod tests {
             pid,
             pgid: 1000,
             start_time: u64::from(pid.unsigned_abs()),
+            tag_only: false,
         };
         (
             pid,
