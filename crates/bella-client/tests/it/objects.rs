@@ -61,6 +61,8 @@ struct ObjectsState {
     fail_puts: usize,
     /// Abort this many downloads halfway through the body.
     break_gets: usize,
+    /// Accept uploads and never answer them.
+    stall_puts: bool,
     /// Leave the length header out of HEAD answers.
     omit_length: bool,
     unauthorized: usize,
@@ -148,6 +150,9 @@ async fn put_object(
     });
     if fail {
         return api_error(ErrorCode::Unavailable, "try again");
+    }
+    if objects.with(|state| state.stall_puts) {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     }
     let content_type = headers.get("content-type").and_then(|v| v.to_str().ok());
     if content_type != Some(OBJECT_CONTENT_TYPE) {
@@ -782,4 +787,74 @@ async fn the_store_works_through_the_object_store_trait() {
     })
     .await;
     assert_eq!(digest, Digest::of_bytes(b"through the trait"));
+}
+
+#[tokio::test]
+async fn an_upload_that_is_never_answered_times_out() {
+    for size in [1_000usize, 6 * 1024 * 1024] {
+        let options = ClientOptions {
+            stream_idle_timeout: Some(std::time::Duration::from_millis(300)),
+            retry: RetryPolicy::disabled(),
+            ..fast_options()
+        };
+        let fx = fixture_with(false, options, ObjectStoreOptions::default()).await;
+        fx.objects.with(|state| state.stall_puts = true);
+        let store = fx.store.clone();
+        let error = on_thread(move || put_bytes(&store, &noise(size, 8)).unwrap_err()).await;
+        match error {
+            StoreError::Unavailable(message) => {
+                assert!(message.contains("in time"), "{message}");
+            }
+            other => panic!("expected Unavailable, got {other:?}"),
+        }
+        fx.objects.with(|state| assert_eq!(state.puts, 1));
+    }
+}
+
+/// The controller answers `204` for an object it already has without
+/// reading the body, which can break the connection under the upload.
+#[tokio::test]
+async fn an_upload_answered_before_its_body_was_read_succeeds() {
+    let stored = Arc::new(Mutex::new(false));
+    let lookup = stored.clone();
+    let accept = stored.clone();
+    let router = Router::new()
+        .route(
+            "/api/v1/objects/missing",
+            post(
+                move |axum::Json(request): axum::Json<MissingObjectsRequest>| async move {
+                    let missing = if *lookup.lock().unwrap() {
+                        Vec::new()
+                    } else {
+                        request.digests
+                    };
+                    axum::Json(MissingObjectsResponse { missing })
+                },
+            ),
+        )
+        .route(
+            "/api/v1/objects/{digest}",
+            put(move || async move {
+                // Someone else published it meanwhile.
+                *accept.lock().unwrap() = true;
+                StatusCode::NO_CONTENT
+            }),
+        )
+        .layer(DefaultBodyLimit::disable());
+    let server = Server::http(router).await;
+    let options = ClientOptions {
+        retry: RetryPolicy::disabled(),
+        ..fast_options()
+    };
+    let store = HttpObjectStore::new(server.client_with(options), Handle::current());
+    for seed in 0..4 {
+        *stored.lock().unwrap() = false;
+        let content = noise(12 * 1024 * 1024, 100 + seed);
+        let digest = Digest::of_bytes(&content);
+        let store = store.clone();
+        let put = on_thread(move || put_bytes(&store, &content))
+            .await
+            .unwrap();
+        assert_eq!(put, digest);
+    }
 }

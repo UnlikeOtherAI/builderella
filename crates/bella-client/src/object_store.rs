@@ -1,11 +1,11 @@
 //! The controller's object store over HTTP.
 
 use crate::blocking::OwnedRuntime;
-use crate::client::{Call, Client};
+use crate::client::{Call, Client, Failure};
 use crate::error::ClientError;
 use crate::retry::Attempts;
 use crate::spool::{Spool, SpoolContent};
-use bella_core::api::MissingObjectsRequest;
+use bella_core::api::{MissingObjectsRequest, MissingObjectsResponse};
 use bella_core::ids::DigestWriter;
 use bella_core::store::{ObjectStore, StoreError};
 use bella_core::{Digest, ErrorCode};
@@ -18,9 +18,10 @@ use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::runtime::Handle;
+use tokio::time::Instant;
 
 /// Content type of an object in the `bella_store::format` encoding: the
 /// 16-byte header followed by one zstd frame.
@@ -32,8 +33,11 @@ pub const OBJECT_LENGTH_HEADER: &str = "x-bella-object-length";
 
 /// Digests asked about in one `POST /objects/missing`.
 const MISSING_BATCH: usize = 1000;
-/// Bytes read from a spooled file per body chunk of an upload.
+/// Bytes per body chunk of an upload.
 const UPLOAD_CHUNK: usize = 64 * 1024;
+/// The slowest rate at which the controller is expected to verify an upload
+/// it has received, used to allow large objects more time for the answer.
+const VERIFY_BYTES_PER_SEC: u64 = 16 * 1024 * 1024;
 
 const IN_RUNTIME: &str = "the HTTP object store blocks its calling thread and was called from a \
      thread that belongs to a Tokio runtime (an async task or a spawn_blocking closure); call it \
@@ -76,7 +80,9 @@ impl Default for ObjectStoreOptions {
 /// `spawn_blocking` closure (which also carries the runtime's context),
 /// every method returns [`StoreError::Unavailable`] with a message that
 /// says so. It never panics and never blocks a runtime thread. The runtime
-/// must stay alive for as long as the store is used.
+/// must stay alive for as long as the store is used, and must drive its own
+/// I/O and timers: a multi-thread runtime does, a current-thread runtime
+/// only while some thread is inside its `Runtime::block_on`.
 ///
 /// # Guarantees
 ///
@@ -85,7 +91,9 @@ impl Default for ObjectStoreOptions {
 ///   `expected`, a mismatch fails before anything is sent. The controller
 ///   is asked whether it already has the object and the upload is skipped
 ///   when it does. An interrupted upload is repeated within the client's
-///   retry policy.
+///   retry policy. An upload has no overall time limit, but one that makes
+///   no progress, or is not answered, for the client's
+///   `stream_idle_timeout` (plus time to verify a large object) fails.
 /// * **Download.** `open` receives the stored encoding, decodes it with
 ///   `bella_store::format::decode` into a spool and checks the length and
 ///   the SHA-256 of the content against the digest before it returns. The
@@ -239,26 +247,34 @@ impl HttpObjectStore {
                 let call = Call::new(Method::PUT, url.clone())
                     .header(CONTENT_TYPE, HeaderValue::from_static(OBJECT_CONTENT_TYPE))
                     .header(CONTENT_LENGTH, HeaderValue::from(stored_len));
-                let failure = match client.upload_once(&call, source.body(stored_len)).await {
+                let progress = Arc::new(Progress::new());
+                let body = source.body(stored_len, progress.clone());
+                let answer = tokio::select! {
+                    answer = client.upload_once(&call, body) => answer,
+                    () = progress.stalled(client.options().stream_idle_timeout, stored_len) => {
+                        Err(Failure::from(ClientError::Timeout))
+                    }
+                };
+                let failure = match answer {
                     Ok(_) => return Ok(()),
                     Err(failure) => failure,
                 };
                 if !failure.transient {
                     return Err(failure.error);
                 }
-                let Some(delay) = attempts.next_delay() else {
-                    return Err(failure.error);
-                };
-                tracing::debug!(error = %failure.error, %digest, "repeating an object upload");
-                tokio::time::sleep(delay).await;
-                // The upload may have arrived although its answer did not.
-                let request = MissingObjectsRequest {
-                    digests: vec![digest.clone()],
-                };
-                if let Ok(response) = client.missing_objects(&request).await
-                    && !response.missing.contains(digest)
-                {
+                let delay = attempts.next_delay();
+                if let Some(delay) = delay {
+                    tracing::debug!(error = %failure.error, %digest, "repeating an object upload");
+                    tokio::time::sleep(delay).await;
+                }
+                // The upload may have arrived although its answer did not:
+                // a controller that already has an object answers without
+                // reading the rest of the body.
+                if is_stored(client, digest).await {
                     return Ok(());
+                }
+                if delay.is_none() {
+                    return Err(failure.error);
                 }
             }
         };
@@ -436,6 +452,65 @@ impl ObjectStore for HttpObjectStore {
     }
 }
 
+/// Asks once whether the controller has the object. Any failure is `false`.
+async fn is_stored(client: &Client, digest: &Digest) -> bool {
+    let request = MissingObjectsRequest {
+        digests: vec![digest.clone()],
+    };
+    let call = client
+        .endpoint(&["objects", "missing"])
+        .and_then(|url| Call::new(Method::POST, url).json(&request));
+    let Ok(call) = call else {
+        return false;
+    };
+    client
+        .json_once::<MissingObjectsResponse>(&call)
+        .await
+        .is_ok_and(|response| !response.missing.contains(digest))
+}
+
+/// How far one upload has got, to notice one that stopped moving.
+struct Progress {
+    /// When the connection last asked for more of the body, and whether it
+    /// has been given all of it.
+    state: Mutex<(Instant, bool)>,
+}
+
+impl Progress {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new((Instant::now(), false)),
+        }
+    }
+
+    fn advance(&self, complete: bool) {
+        // The lock only guards a plain value, which is valid even if a
+        // holder panicked.
+        *self.state.lock().unwrap_or_else(PoisonError::into_inner) = (Instant::now(), complete);
+    }
+
+    /// Resolves once nothing has happened for `idle`. After the whole body
+    /// has been handed over, the wait for the answer also allows for the
+    /// controller verifying `len` bytes. Never resolves without `idle`.
+    async fn stalled(&self, idle: Option<Duration>, len: u64) {
+        let Some(idle) = idle else {
+            return std::future::pending().await;
+        };
+        loop {
+            let (last, complete) = *self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let allowed = if complete {
+                idle.saturating_add(Duration::from_secs(len / VERIFY_BYTES_PER_SEC))
+            } else {
+                idle
+            };
+            let Some(left) = allowed.checked_sub(last.elapsed()) else {
+                return;
+            };
+            tokio::time::sleep(left.max(Duration::from_millis(1))).await;
+        }
+    }
+}
+
 /// Where an upload reads its bytes from on every try.
 enum UploadSource {
     Memory(Bytes),
@@ -443,40 +518,53 @@ enum UploadSource {
 }
 
 impl UploadSource {
-    /// A fresh body over the first `len` bytes.
+    /// A fresh body over the first `len` bytes, reporting to `progress`.
     ///
     /// A file body reads at explicit offsets under the lock, one chunk per
     /// blocking task, so the body of an abandoned try that is still being
     /// torn down cannot move the position under a later try.
-    fn body(&self, len: u64) -> reqwest::Body {
+    fn body(&self, len: u64, progress: Arc<Progress>) -> reqwest::Body {
+        let source = match self {
+            UploadSource::Memory(bytes) => UploadSource::Memory(bytes.clone()),
+            UploadSource::File(file) => UploadSource::File(file.clone()),
+        };
+        let stream = futures_util::stream::unfold((source, 0u64), move |(source, offset)| {
+            let progress = progress.clone();
+            async move {
+                if offset >= len {
+                    return None;
+                }
+                let want = usize::try_from(len - offset)
+                    .unwrap_or(UPLOAD_CHUNK)
+                    .min(UPLOAD_CHUNK);
+                match source.chunk(offset, want).await {
+                    Ok(chunk) => {
+                        let next = offset + chunk.len() as u64;
+                        progress.advance(next >= len);
+                        Some((Ok(chunk), (source, next)))
+                    }
+                    // Ends the stream after reporting the error.
+                    Err(error) => Some((Err(error), (source, len))),
+                }
+            }
+        });
+        reqwest::Body::wrap_stream(stream)
+    }
+
+    /// Exactly `want` bytes starting at `offset`.
+    async fn chunk(&self, offset: u64, want: usize) -> io::Result<Bytes> {
         match self {
-            UploadSource::Memory(bytes) => reqwest::Body::from(bytes.clone()),
+            UploadSource::Memory(bytes) => usize::try_from(offset)
+                .ok()
+                .and_then(|start| Some(start..start.checked_add(want)?))
+                .filter(|range| range.end <= bytes.len())
+                .map(|range| bytes.slice(range))
+                .ok_or_else(|| io::Error::from(io::ErrorKind::UnexpectedEof)),
             UploadSource::File(file) => {
-                let stream =
-                    futures_util::stream::unfold((file.clone(), 0u64), move |(file, offset)| {
-                        async move {
-                            if offset >= len {
-                                return None;
-                            }
-                            let want = usize::try_from(len - offset)
-                                .unwrap_or(UPLOAD_CHUNK)
-                                .min(UPLOAD_CHUNK);
-                            let source = file.clone();
-                            let read =
-                                tokio::task::spawn_blocking(move || read_at(&source, offset, want))
-                                    .await
-                                    .unwrap_or_else(|e| Err(io::Error::other(e)));
-                            match read {
-                                Ok(chunk) => {
-                                    let next = offset + chunk.len() as u64;
-                                    Some((Ok(chunk), (file, next)))
-                                }
-                                // Ends the stream after reporting the error.
-                                Err(error) => Some((Err(error), (file, len))),
-                            }
-                        }
-                    });
-                reqwest::Body::wrap_stream(stream)
+                let file = file.clone();
+                tokio::task::spawn_blocking(move || read_at(&file, offset, want))
+                    .await
+                    .unwrap_or_else(|e| Err(io::Error::other(e)))
             }
         }
     }

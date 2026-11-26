@@ -179,6 +179,36 @@ async fn client_errors_are_never_retried() {
 }
 
 #[tokio::test]
+async fn a_4xx_is_final_even_if_its_body_says_unavailable() {
+    let mock = Mock::new();
+    let server = Server::http(mock.router()).await;
+    let body = serde_json::to_vec(&bella_core::ApiError::new(
+        ErrorCode::Unavailable,
+        "confused",
+    ))
+    .unwrap();
+    mock.on(
+        Method::GET,
+        "/api/v1/fleet",
+        Reply {
+            status: 429,
+            content_type: Some("application/json"),
+            body,
+        },
+    );
+    let error = server.client().fleet().await.unwrap_err();
+    assert_eq!(error.code(), Some(ErrorCode::Unavailable));
+    assert_eq!(mock.count(), 1);
+}
+
+#[test]
+fn by_default_a_request_that_timed_out_can_still_be_repeated() {
+    let options = ClientOptions::default();
+    assert_eq!(options.connect_timeout, Duration::from_secs(10));
+    assert!(options.retry.max_elapsed > options.request_timeout + options.retry.initial_backoff);
+}
+
+#[tokio::test]
 async fn requests_that_are_not_safe_to_repeat_are_sent_once() {
     let fx = fixtures();
     let mock = Mock::new();

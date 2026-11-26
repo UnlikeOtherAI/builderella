@@ -481,7 +481,9 @@ async fn check_status(mut response: Response, timeout: Duration) -> Result<Respo
         .and_then(Result::ok)
         .unwrap_or_default();
     let error = error_from_response(status.as_u16(), &body);
-    let transient = error.is_transient() || matches!(status.as_u16(), 502..=504);
+    // A 4xx answer is final, whatever its body claims.
+    let transient =
+        !status.is_client_error() && (error.is_transient() || matches!(status.as_u16(), 502..=504));
     Err(Failure { error, transient })
 }
 

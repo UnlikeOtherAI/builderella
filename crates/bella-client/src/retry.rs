@@ -30,13 +30,15 @@ pub struct RetryPolicy {
 }
 
 impl Default for RetryPolicy {
-    /// Four tries, waits of up to 250 ms, 500 ms and 1 s, within 30 s.
+    /// Four tries, waits of up to 250 ms, 500 ms and 1 s, no retry later
+    /// than 60 s. That is longer than the default request timeout, so a
+    /// request whose answer never came is still repeated.
     fn default() -> Self {
         Self {
             max_attempts: 4,
             initial_backoff: Duration::from_millis(250),
             max_backoff: Duration::from_secs(5),
-            max_elapsed: Duration::from_secs(30),
+            max_elapsed: Duration::from_secs(60),
         }
     }
 }

@@ -574,3 +574,34 @@ async fn closing_and_dropping_end_the_connection_on_the_server_side() {
     }
     assert!(failed, "sending on a closed connection kept succeeding");
 }
+
+#[tokio::test]
+async fn closing_a_connection_the_controller_does_not_answer_ends_cleanly() {
+    let harness = Harness::start(false, |socket| async move {
+        // Never read, so the close frame is not answered.
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        drop(socket);
+    })
+    .await;
+    let options = WorkerSocketOptions {
+        ping_interval: Duration::from_millis(30),
+        pong_timeout: Duration::from_millis(200),
+        ..WorkerSocketOptions::default()
+    };
+    let (sink, mut stream) = harness.connect_with(options).await;
+    within(sink.close()).await;
+    // No pings follow the close frame, so there is no error to report.
+    assert!(within(stream.next()).await.is_none());
+    let error = within(sink.send(&WorkerMsg::Pong { nonce: 1 }))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ClientError::Transport { .. }), "{error:?}");
+}
+
+#[tokio::test]
+async fn the_default_frame_limit_matches_the_controllers() {
+    assert_eq!(
+        WorkerSocketOptions::default().max_message_bytes,
+        8 * 1024 * 1024
+    );
+}

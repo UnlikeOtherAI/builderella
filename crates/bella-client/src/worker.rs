@@ -20,6 +20,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, MissedTickBehavior};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::error::ProtocolError;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::http::header::{
     AUTHORIZATION, USER_AGENT as USER_AGENT_HEADER,
@@ -48,7 +49,7 @@ pub struct WorkerSocketOptions {
     /// (15 s).
     pub pong_timeout: Duration,
     /// Largest frame, and largest whole message, accepted from the
-    /// controller or sent to it. Default 4 MiB.
+    /// controller or sent to it. Default 8 MiB, the controller's own limit.
     pub max_message_bytes: usize,
     /// Messages from the controller buffered for the reader before the
     /// connection stops reading. Default 256.
@@ -61,7 +62,7 @@ impl Default for WorkerSocketOptions {
             connect_timeout: Duration::from_secs(10),
             ping_interval: bella_core::defaults::HEARTBEAT_INTERVAL,
             pong_timeout: bella_core::defaults::TELEMETRY_STALE_AFTER,
-            max_message_bytes: 4 * 1024 * 1024,
+            max_message_bytes: 8 * 1024 * 1024,
             inbound_buffer: 256,
         }
     }
@@ -69,9 +70,12 @@ impl Default for WorkerSocketOptions {
 
 /// Connects a worker to the controller's WebSocket.
 ///
-/// The connection is driven by a background task for as long as either
-/// half exists, so WebSocket pings from the controller are answered and
-/// this side's own pings are sent whether or not the caller is reading.
+/// The connection is driven by a background task until it ends or the
+/// reading half is dropped, so WebSocket pings from the controller are
+/// answered and this side's own pings are sent without the caller polling
+/// anything. A reader that leaves [`WorkerSocketOptions::inbound_buffer`]
+/// messages unread stops the connection from being read, and with it the
+/// answering of pings, until it catches up.
 pub struct WorkerSocket;
 
 impl WorkerSocket {
@@ -217,7 +221,8 @@ impl WorkerSink {
     }
 
     /// Starts an orderly close. Messages already accepted are written
-    /// first; the reading half ends once the controller has closed too.
+    /// first and later sends fail; the reading half ends once the controller
+    /// has closed too, or after the pong timeout if it does not.
     pub async fn close(&self) {
         let _ = self
             .tx
@@ -310,6 +315,9 @@ struct Driver {
     awaiting_pong: Option<Instant>,
     ping_nonce: u64,
     senders_open: bool,
+    /// Since when a closing handshake has been under way. No more pings are
+    /// sent and no more messages accepted.
+    closing: Option<Instant>,
 }
 
 impl Driver {
@@ -333,6 +341,7 @@ impl Driver {
             awaiting_pong: None,
             ping_nonce: 0,
             senders_open: true,
+            closing: None,
         }
     }
 
@@ -383,6 +392,10 @@ impl Driver {
             let reading = self.held.is_none();
             let writing = !self.queue.is_empty() || self.needs_flush;
             let accepting = self.senders_open && self.queue.len() < OUTBOUND_QUEUE;
+            let close_deadline = match (self.closing, &self.held) {
+                (Some(since), None) => Some(since + self.options.pong_timeout),
+                _ => None,
+            };
 
             tokio::select! {
                 permit = self.in_tx.reserve(), if !reading => match permit {
@@ -404,12 +417,19 @@ impl Driver {
                     // A function over the fields it changes: the permit of
                     // the first branch keeps `self.in_tx` borrowed for the
                     // whole `select!`.
-                    Some(Ok(message)) => received(
-                        message,
-                        &mut self.held,
-                        &mut self.awaiting_pong,
-                        &mut self.needs_flush,
-                    ),
+                    Some(Ok(message)) => {
+                        if message.is_close() {
+                            self.closing.get_or_insert_with(Instant::now);
+                            self.awaiting_pong = None;
+                            self.senders_open = false;
+                        }
+                        received(
+                            message,
+                            &mut self.held,
+                            &mut self.awaiting_pong,
+                            &mut self.needs_flush,
+                        );
+                    }
                     Some(Err(WsError::ConnectionClosed | WsError::AlreadyClosed)) => {
                         return Exit::Closed;
                     }
@@ -418,7 +438,15 @@ impl Driver {
                     }
                 },
                 outgoing = self.out_rx.recv(), if accepting => match outgoing {
-                    Some(outgoing) => self.queue.push_back(outgoing),
+                    Some(outgoing) => {
+                        if outgoing.message.is_close() {
+                            self.closing.get_or_insert_with(Instant::now);
+                            self.awaiting_pong = None;
+                            self.senders_open = false;
+                            self.out_rx.close();
+                        }
+                        self.queue.push_back(outgoing);
+                    }
                     None => self.senders_open = false,
                 },
                 written = poll_fn(|cx| {
@@ -430,12 +458,25 @@ impl Driver {
                         cx,
                     )
                 }), if writing => {
-                    if let Err(error) = written {
-                        return Exit::Failed(socket_error(error, self.options.max_message_bytes));
+                    match written {
+                        Ok(()) => {}
+                        // The controller started to close while this side
+                        // still had something to write. What it sent before
+                        // that is still to be read.
+                        Err(
+                            WsError::ConnectionClosed
+                            | WsError::Protocol(ProtocolError::SendAfterClosing),
+                        ) => self.stop_writing(),
+                        Err(error) => {
+                            return Exit::Failed(socket_error(
+                                error,
+                                self.options.max_message_bytes,
+                            ));
+                        }
                     }
                 },
                 _ = ping.tick() => {
-                    if self.awaiting_pong.is_none() {
+                    if self.awaiting_pong.is_none() && self.closing.is_none() {
                         self.ping_nonce = self.ping_nonce.wrapping_add(1);
                         let payload = Bytes::copy_from_slice(&self.ping_nonce.to_be_bytes());
                         // Ahead of queued messages: liveness is not held
@@ -447,6 +488,9 @@ impl Driver {
                         self.awaiting_pong = Some(Instant::now());
                     }
                 },
+                () = wait_until(close_deadline), if close_deadline.is_some() => {
+                    return Exit::Closed;
+                },
                 () = wait_until(pong_deadline), if pong_deadline.is_some() => {
                     return Exit::Failed(ClientError::transport(format!(
                         "the controller did not answer a ping within {:?}",
@@ -455,6 +499,18 @@ impl Driver {
                 },
             }
         }
+    }
+
+    /// Fails every message not yet written, and accepts no more.
+    fn stop_writing(&mut self) {
+        self.closing.get_or_insert_with(Instant::now);
+        self.awaiting_pong = None;
+        self.senders_open = false;
+        self.needs_flush = false;
+        self.out_rx.close();
+        // Dropping a waiter tells its sender that the connection is closed.
+        self.queue.clear();
+        self.unflushed.clear();
     }
 }
 

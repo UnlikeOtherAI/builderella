@@ -74,10 +74,14 @@ impl Events {
     }
 
     async fn serve(&self) -> Server {
+        self.serve_with(false).await
+    }
+
+    async fn serve_with(&self, tls: bool) -> Server {
         let router = Router::new()
             .route("/api/v1/events", get(events))
             .with_state(self.clone());
-        Server::http(router).await
+        Server::start(tls, router).await
     }
 }
 
@@ -224,6 +228,22 @@ async fn the_stream_reconnects_from_the_last_sequence_after_the_server_drops_it(
         events.queries(),
         vec![Some("after=40".to_owned()), Some("after=42".to_owned())]
     );
+}
+
+#[tokio::test]
+async fn the_stream_resumes_over_pinned_tls() {
+    let events = Events::default();
+    let first = events.stream();
+    let second = events.stream();
+    let server = events.serve_with(true).await;
+    let mut stream = server.client().events(None);
+
+    send(&first, &frame(&record(5)));
+    assert_eq!(within(stream.next()).await.unwrap().unwrap(), record(5));
+    drop(first);
+    send(&second, &frame(&record(6)));
+    assert_eq!(within(stream.next()).await.unwrap().unwrap(), record(6));
+    assert_eq!(events.queries(), vec![None, Some("after=5".to_owned())]);
 }
 
 #[tokio::test]
