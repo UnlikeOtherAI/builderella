@@ -35,6 +35,10 @@ tokio = { version = "1", default-features = false, features = ["rt-multi-thread"
 clap = { version = "4.6", default-features = false, features = ["std", "derive", "env", "help", "usage", "error-context", "suggestions"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter"] }
 
+[target.'cfg(unix)'.dependencies]
+# Lifts the soft open-file limit; launchd starts programs with 256.
+rlimit = "0.12"
+
 [target.'cfg(windows)'.dependencies]
 # Reads the service account's password without echoing it.
 rpassword = "7"

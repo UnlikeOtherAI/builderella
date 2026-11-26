@@ -30,6 +30,9 @@ fn main() -> ExitCode {
         Command::Controller(ControllerCmd::Run(_)) | Command::Worker(WorkerCmd::Run(_))
     );
     logging::init(cli.verbose, if daemon { "info" } else { "warn" });
+    if daemon {
+        raise_open_file_limit();
+    }
 
     let ctx = Ctx {
         out: Out { json: cli.json },
@@ -42,6 +45,18 @@ fn main() -> ExitCode {
             ctx.out.error(&error);
             ExitCode::from(error.exit.code())
         }
+    }
+}
+
+/// Lift the soft open-file limit to the hard one. A controller holds a
+/// socket per client and worker plus its database and object files, and
+/// launchd starts programs with a soft limit of 256, which a busy controller
+/// exceeds. Failing to raise it is logged, not fatal.
+fn raise_open_file_limit() {
+    #[cfg(unix)]
+    match rlimit::increase_nofile_limit(u64::MAX) {
+        Ok(limit) => tracing::debug!(limit, "open-file limit"),
+        Err(error) => tracing::warn!(%error, "could not raise the open-file limit"),
     }
 }
 
