@@ -284,11 +284,19 @@ impl Sim {
         state
     }
 
+    /// Release the reservations of jobs that finish at the current tick.
+    /// `step` does this itself; call it first to look at the state the
+    /// scheduler is about to see.
+    pub fn release_finished(&mut self) {
+        let tick = self.tick;
+        self.running.retain(|run| run.ends_at_tick > tick);
+    }
+
     /// One tick: release finished jobs, schedule, start what was offered.
     /// `duration` gives each started job's length in ticks.
     pub fn step(&mut self, mut duration: impl FnMut(&QueuedJob) -> u64) -> Schedule {
         let tick = self.tick;
-        self.running.retain(|run| run.ends_at_tick > tick);
+        self.release_finished();
         let plan = schedule(&self.view());
         for offer in &plan.offers {
             let position = self

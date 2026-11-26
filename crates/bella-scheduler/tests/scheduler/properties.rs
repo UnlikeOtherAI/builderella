@@ -22,14 +22,14 @@ fn random_project(rng: &mut Rng, index: u64) -> ProjectState {
     let mut p = project(&format!("project-{index}"));
     p.policy.weight = 50 + rng.below(300) as u32;
     if rng.chance(3) {
-        p.policy.max_concurrent_attempts = Some(1 + rng.below(4) as u32);
+        p.policy.max_concurrent_attempts = Some(1 + rng.below(5) as u32);
     }
     p.policy.max_environments = Some(1 + rng.below(3) as u32);
     p.policy.source_lan_only = rng.chance(6);
     p.policy.allow_urgent = rng.chance(2);
-    p.held_attempts = rng.below(3) as u32;
+    p.held_attempts = rng.below(2) as u32;
     p.reserved = vector(rng.below(8), rng.below(16));
-    p.environments = rng.below(3) as u32;
+    p.environments = rng.below(2) as u32;
     p
 }
 
@@ -43,8 +43,14 @@ fn random_machine(rng: &mut Rng, index: u64, projects: &[ProjectState]) -> Machi
         &[
             MachineProfile::DedicatedBuilder,
             MachineProfile::DedicatedBuilder,
+            MachineProfile::DedicatedBuilder,
+            MachineProfile::DedicatedBuilder,
+            MachineProfile::ProtectedWorkstation,
             MachineProfile::ProtectedWorkstation,
             MachineProfile::PortableBuilder,
+            MachineProfile::PortableBuilder,
+            MachineProfile::EphemeralCloud,
+            MachineProfile::EphemeralCloud,
             MachineProfile::EphemeralCloud,
             MachineProfile::InfrastructureOnly,
         ],
@@ -63,33 +69,40 @@ fn random_machine(rng: &mut Rng, index: u64, projects: &[ProjectState]) -> Machi
             .tokens
             .insert("gpu".to_string(), 1 + rng.below(2));
     }
-    m.effective_budget = match rng.below(10) {
+    m.effective_budget = match rng.below(20) {
         0 => None,
-        1..=5 => Some(m.managed_ceiling.clone()),
+        1..=10 => Some(m.managed_ceiling.clone()),
         _ => {
+            // Anywhere from half the ceiling to somewhat above it.
             let mut budget = m.managed_ceiling.clone();
-            budget.cpu_milli = rng.below(m.managed_ceiling.cpu_milli + 4000);
-            budget.memory_bytes = rng.below(m.managed_ceiling.memory_bytes + 8 * GIB);
+            let (cpu, memory) = (budget.cpu_milli, budget.memory_bytes);
+            budget.cpu_milli = cpu / 2 + rng.below(cpu / 2 + 4000);
+            budget.memory_bytes = memory / 2 + rng.below(memory / 2 + 8 * GIB);
             if rng.chance(2) {
                 budget.tokens.clear();
             }
             Some(budget)
         }
     };
-    // Sometimes more is reserved than the machine can currently grant.
-    m.reserved = vector(rng.below(cpus + 2), rng.below(memory + 4));
+    // Usually part of the machine is taken; sometimes more is reserved
+    // than it can currently grant.
+    m.reserved = if rng.chance(8) {
+        vector(rng.below(cpus + 4), rng.below(memory + 8))
+    } else {
+        vector(rng.below(cpus / 2 + 1), rng.below(memory / 2 + 1))
+    };
     if rng.chance(4) && m.managed_ceiling.token("gpu") > 0 {
         m.reserved.tokens.insert("gpu".to_string(), 1);
     }
-    m.held_attempts = rng.below(4) as u32;
-    m.connected = !rng.chance(10);
-    m.admitting = !rng.chance(10);
-    m.reconciled = !rng.chance(15);
+    m.held_attempts = rng.below(3) as u32;
+    m.connected = !rng.chance(15);
+    m.admitting = !rng.chance(15);
+    m.reconciled = !rng.chance(20);
     m.on_lan = !rng.chance(6);
-    m.telemetry_age_ms = if rng.chance(15) {
+    m.telemetry_age_ms = if rng.chance(20) {
         None
     } else {
-        Some(rng.below(18_000))
+        Some(rng.below(16_000))
     };
     if rng.chance(8) {
         m.flags = vec![pick(
@@ -131,11 +144,11 @@ fn random_job(
     projects: &[ProjectState],
     machines: &[MachineState],
 ) -> QueuedJob {
-    let mut s = spec(1 + rng.below(8), 1 + rng.below(24));
+    let mut s = spec(1 + rng.below(6), 1 + rng.below(16));
     if rng.chance(8) {
         s.envelope.peak.tokens.insert("gpu".to_string(), 1);
     }
-    s.compatibility.build_hosts = match rng.below(4) {
+    s.compatibility.build_hosts = match rng.below(6) {
         0 => Vec::new(),
         1 => vec![PlatformSelector::os(pick(
             rng,
@@ -161,7 +174,7 @@ fn random_job(
             .requires
             .push(CapabilityRequirement::named("gui-session"));
     }
-    s.placement = match rng.below(10) {
+    s.placement = match rng.below(16) {
         0 => PlacementChoice::Prefer {
             platform: PlatformSelector::os(Os::Macos),
         },
@@ -220,7 +233,7 @@ fn random_fleet(seed: u64) -> FleetState {
     let projects: Vec<ProjectState> = (0..1 + rng.below(4))
         .map(|i| random_project(&mut rng, i))
         .collect();
-    let machines: Vec<MachineState> = (0..rng.below(7))
+    let machines: Vec<MachineState> = (0..rng.below(8))
         .map(|i| random_machine(&mut rng, i, &projects))
         .collect();
     let queue: Vec<QueuedJob> = (0..rng.below(40))
@@ -453,6 +466,7 @@ fn generated_fleets_never_overcommit_and_account_for_every_job() {
     }
     // The generator has to exercise both outcomes and a wide set of reasons,
     // or the checks above prove little.
+    println!("{offers} offers, {reasons} reasons, codes {reason_codes:?}");
     assert!(offers > 400, "only {offers} offers in {SEEDS} fleets");
     assert!(reasons > 2000, "only {reasons} reasons in {SEEDS} fleets");
     assert!(
@@ -508,6 +522,7 @@ fn a_running_fleet_never_overcommits_across_ticks() {
         let mut sim = Sim::new(state, 1_000);
         let mut rng = Rng::new(seed);
         for _ in 0..25 {
+            sim.release_finished();
             let before = sim.view();
             let plan = sim.step(|_| 1 + rng.below(4));
             check(seed, &before, &plan);
