@@ -96,6 +96,7 @@ impl Failure {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn code(&self) -> ErrorCode {
         self.error.code
     }

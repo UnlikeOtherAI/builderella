@@ -13,7 +13,7 @@ use bella_ledger::{AttemptTarget, Ledger, LedgerError};
 use bella_net::{ControllerUrl, Fingerprint};
 use bella_store::FsStore;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use tokio::sync::{Notify, RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
@@ -35,8 +35,6 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub(crate) struct EventBus {
     wake: Notify,
     sender: broadcast::Sender<Arc<EventRecord>>,
-    /// Sequence of the newest event broadcast so far.
-    position: AtomicU64,
 }
 
 impl EventBus {
@@ -45,7 +43,6 @@ impl EventBus {
         Self {
             wake: Notify::new(),
             sender,
-            position: AtomicU64::new(0),
         }
     }
 
@@ -62,19 +59,9 @@ impl EventBus {
         self.wake.notified().await;
     }
 
-    pub(crate) fn position(&self) -> u64 {
-        self.position.load(Ordering::SeqCst)
-    }
-
-    pub(crate) fn set_position(&self, seq: u64) {
-        self.position.store(seq, Ordering::SeqCst);
-    }
-
     pub(crate) fn publish(&self, event: EventRecord) {
-        let seq = event.seq;
         // An error only means that nobody is listening.
         let _ = self.sender.send(Arc::new(event));
-        self.set_position(seq);
     }
 }
 

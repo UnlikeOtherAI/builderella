@@ -123,20 +123,21 @@ impl FromRequestParts<App> for MachineAuth {
     }
 }
 
-/// A principal of at least the given role, or a machine. Workers fetch
-/// source objects and snapshots and upload artifacts with their own token.
-pub(crate) struct Reader(pub Authenticated);
+/// Any principal, or a machine. Workers fetch source objects and snapshots
+/// with their own token.
+pub(crate) struct Reader;
 
 impl FromRequestParts<App> for Reader {
     type Rejection = Failure;
 
     async fn from_request_parts(parts: &mut Parts, app: &App) -> Result<Self, Failure> {
-        authenticate(parts, app).await.map(Reader)
+        authenticate(parts, app).await.map(|_| Reader)
     }
 }
 
 /// A developer or administrator, or a machine: whoever may add objects.
-pub(crate) struct Writer(#[allow(dead_code)] pub Authenticated);
+/// Workers upload artifacts with their own token.
+pub(crate) struct Writer;
 
 impl FromRequestParts<App> for Writer {
     type Rejection = Failure;
@@ -148,7 +149,7 @@ impl FromRequestParts<App> for Writer {
                     "uploading objects needs the developer role; the token has the viewer role",
                 ))
             }
-            who => Ok(Writer(who)),
+            _ => Ok(Writer),
         }
     }
 }

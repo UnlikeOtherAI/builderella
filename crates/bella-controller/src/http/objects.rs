@@ -95,7 +95,7 @@ fn upload_failure(error: StoreError) -> Failure {
 /// 409 when the content does not match the digest.
 pub(crate) async fn upload(
     State(app): State<App>,
-    _caller: Writer,
+    _: Writer,
     ApiPath(digest): ApiPath,
     headers: HeaderMap,
     body: Body,
@@ -232,7 +232,7 @@ fn pump_verified(
 /// `GET /objects/{digest}`.
 pub(crate) async fn download(
     State(app): State<App>,
-    _caller: Reader,
+    _: Reader,
     ApiPath(digest): ApiPath,
     ApiQuery(query): ApiQuery<DownloadQuery>,
 ) -> ApiResult<Response> {
@@ -276,7 +276,7 @@ fn object_response(media_type: &'static str, length: u64, body: Body) -> Respons
 /// `x-bella-object-length`, or 404.
 pub(crate) async fn head(
     State(app): State<App>,
-    _caller: Reader,
+    _: Reader,
     ApiPath(digest): ApiPath,
 ) -> ApiResult<Response> {
     let digest: Digest = parse_id(&digest)?;
@@ -295,7 +295,7 @@ pub(crate) async fn head(
 /// `POST /objects/missing`: which of these digests still need uploading.
 pub(crate) async fn missing(
     State(app): State<App>,
-    _caller: Reader,
+    _: Reader,
     ApiJson(request): ApiJson<MissingObjectsRequest>,
 ) -> ApiResult<Json<MissingObjectsResponse>> {
     if request.digests.len() > MAX_MISSING_QUERY {

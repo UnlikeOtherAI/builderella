@@ -124,7 +124,7 @@ async fn healthz() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
-async fn version(_caller: Reader) -> Json<serde_json::Value> {
+async fn version(_: Reader) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "version": CONTROLLER_VERSION,
         "protocol_version": PROTOCOL_VERSION,

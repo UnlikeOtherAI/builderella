@@ -273,7 +273,6 @@ async fn pump_events(app: App) {
             0
         }
     };
-    app.events.set_position(position);
     loop {
         tokio::select! {
             () = app.shutdown.cancelled() => return,

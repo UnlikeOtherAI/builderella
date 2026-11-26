@@ -115,7 +115,7 @@ pub(crate) async fn register(
 /// `GET /snapshots/{id}`.
 pub(crate) async fn show(
     State(app): State<App>,
-    _caller: Reader,
+    _: Reader,
     ApiPath(id): ApiPath,
 ) -> ApiResult<Json<SnapshotView>> {
     let id = SnapshotId(parse_id::<Digest>(&id)?);
