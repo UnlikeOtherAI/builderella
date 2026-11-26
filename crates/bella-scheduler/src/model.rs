@@ -27,8 +27,12 @@ pub struct MachineState {
     pub policy: MachinePolicy,
     /// Static upper bound on managed work, from policy and hardware.
     pub managed_ceiling: ResourceVector,
-    /// What the worker's protection loop grants in total right now. `None`
-    /// until the worker has reported one; such a machine gets no offers.
+    /// What the worker's protection loop grants in total right now: the
+    /// `ceiling` of its `bella_protect::Budget`, as sent in the heartbeat.
+    /// It names every token the worker's policy declares; a token missing
+    /// here is one the worker does not grant (see
+    /// [`effective_capacity`](crate::effective_capacity)). `None` until the
+    /// worker has reported one; such a machine gets no offers.
     pub effective_budget: Option<ResourceVector>,
     /// Sum of every reservation held on this machine, including offered,
     /// uncertain and quarantined ones.

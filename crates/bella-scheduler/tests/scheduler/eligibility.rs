@@ -146,7 +146,7 @@ fn require_is_a_hard_constraint_and_prefer_is_not() {
     };
     let must = job("must", &p, 0, required);
     let found = sole_blocker(linux.clone(), must);
-    assert_eq!(found.code, Code::WrongPlatform);
+    assert_eq!(found.code, Code::PlacementConstraint);
     assert!(found.permanent);
     assert!(
         found.message.contains("requires macos-any"),
@@ -197,7 +197,7 @@ fn a_machine_choice_matches_the_id_or_a_unique_name() {
         .find(|(id, _)| *id == a.id)
         .and_then(|(_, verdict)| verdict.err())
         .expect("alpha is excluded");
-    assert_eq!(other.code, Code::WrongPlatform);
+    assert_eq!(other.code, Code::PlacementConstraint);
     assert!(other.permanent);
     assert!(
         other.message.contains("requires machine `beta`"),
@@ -235,7 +235,7 @@ fn a_pool_choice_matches_the_machine_policy() {
     inside.policy.pools = vec!["release".to_string()];
 
     let found = sole_blocker(outside.clone(), queued.clone());
-    assert_eq!(found.code, Code::WrongPlatform);
+    assert_eq!(found.code, Code::PlacementConstraint);
     assert!(found.permanent);
     assert!(
         found.message.contains("requires pool `release`"),
@@ -598,7 +598,7 @@ fn each_temporary_condition_has_its_own_code() {
         (
             "upgrading",
             |m| m.flags = vec![Flag::Upgrading],
-            Code::MachineDraining,
+            Code::MachineUpgrading,
             "being upgraded",
         ),
         (
@@ -622,7 +622,7 @@ fn each_temporary_condition_has_its_own_code() {
         (
             "hot",
             |m| m.flags = vec![Flag::Overheated],
-            Code::ForegroundProtection,
+            Code::Overheated,
             "overheated",
         ),
         (
@@ -809,11 +809,13 @@ fn effective_capacity_is_the_smaller_of_ceiling_and_budget() {
     assert_eq!(capacity.cpu_milli, 6000);
     assert_eq!(capacity.memory_bytes, 32 * GIB);
     assert_eq!(capacity.disk_bytes, 40 * GIB);
-    // Narrowed where the budget names the token, untouched where it is silent.
+    // Narrowed where the budget names the token. A worker's budget names
+    // every token it declares, so one it is silent about is not granted.
     assert_eq!(capacity.token("gpu"), 1);
-    assert_eq!(capacity.token("ios-simulator"), 4);
+    assert_eq!(capacity.token("ios-simulator"), 0);
     // A token the ceiling does not declare is never granted.
     assert_eq!(capacity.token("undeclared"), 0);
+    assert_eq!(capacity, ceiling.min(&budget));
 }
 
 #[test]
@@ -952,7 +954,7 @@ fn a_project_at_its_environment_limit_starts_no_new_environment() {
     );
     let plan = schedule(&state);
     let reason = reason_for(&plan, &keeps_running);
-    assert_eq!(reason.code, Code::ProjectConcurrencyLimit);
+    assert_eq!(reason.code, Code::EnvironmentQuota);
     assert!(
         reason.message.contains("1 of at most 1 environments"),
         "{}",

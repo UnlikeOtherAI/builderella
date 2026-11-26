@@ -37,19 +37,21 @@ pub fn remove_tree(path: &Path) -> io::Result<()> {
         make_accessible(&dir);
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) if gone(&error, &dir) => continue,
             Err(error) => return Err(error),
         };
-        stack.push((dir, true));
+        stack.push((dir.clone(), true));
         for entry in entries {
             let entry = match entry {
                 Ok(entry) => entry,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                // The directory itself went away mid-listing; there is
+                // nothing left to list.
+                Err(error) if gone(&error, &dir) => break,
                 Err(error) => return Err(error),
             };
             let file_type = match entry.file_type() {
                 Ok(file_type) => file_type,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) if gone(&error, &entry.path()) => continue,
                 Err(error) => return Err(error),
             };
             if file_type.is_dir() {
@@ -62,9 +64,21 @@ pub fn remove_tree(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn tolerate_missing(result: io::Result<()>) -> io::Result<()> {
+/// Whether `error` only says that `path` is no longer there. Not every
+/// system reports that as "not found": listing a directory that another
+/// process removed in the meantime fails with "invalid argument" on some
+/// macOS versions. So when the kind is something else, look again.
+fn gone(error: &io::Error, path: &Path) -> bool {
+    error.kind() == io::ErrorKind::NotFound
+        || matches!(
+            fs::symlink_metadata(path),
+            Err(error) if error.kind() == io::ErrorKind::NotFound
+        )
+}
+
+fn tolerate_missing(result: io::Result<()>, path: &Path) -> io::Result<()> {
     match result {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) if gone(&error, path) => Ok(()),
         other => other,
     }
 }
@@ -74,9 +88,9 @@ fn remove_dir(dir: &Path) -> io::Result<()> {
     match fs::remove_dir(dir) {
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
             clear_read_only(dir);
-            tolerate_missing(fs::remove_dir(dir))
+            tolerate_missing(fs::remove_dir(dir), dir)
         }
-        other => tolerate_missing(other),
+        other => tolerate_missing(other, dir),
     }
 }
 
@@ -91,9 +105,9 @@ fn remove_leaf(path: &Path, file_type: &FileType) -> io::Result<()> {
             if !file_type.is_symlink() {
                 clear_read_only(path);
             }
-            tolerate_missing(fs::remove_file(path))
+            tolerate_missing(fs::remove_file(path), path)
         }
-        other => tolerate_missing(other),
+        other => tolerate_missing(other, path),
     }
 }
 

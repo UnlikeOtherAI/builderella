@@ -1,7 +1,7 @@
 //! Store behaviour tests. Every test works in its own temporary directory.
 
 use crate::format::{self, HEADER_LEN, Header};
-use crate::{FsStore, GcReport, StoreOptions, StoreStats, Verification};
+use crate::{FsStore, GcReport, Repaired, StoreOptions, StoreStats, Verification};
 use bella_core::store::{ObjectStore, StoreError, get_bytes, put_bytes};
 use bella_core::{Digest, ManualClock, UnixMillis};
 use std::cell::RefCell;
@@ -862,6 +862,235 @@ fn put_replaces_an_object_whose_header_is_damaged() {
 
     assert_eq!(put_bytes(&store, &content).unwrap(), digest);
     assert_eq!(get_bytes(&store, &digest).unwrap(), content);
+    assert!(tmp_entries(&store).is_empty());
+}
+
+/// `content` in the stored format, as a store would write it.
+fn stored_form(content: &[u8]) -> Vec<u8> {
+    let mut out = Cursor::new(Vec::new());
+    format::encode(&mut &content[..], &mut out, u64::MAX).unwrap();
+    out.into_inner()
+}
+
+/// Damages the stored body of `digest` and leaves its header alone, so the
+/// object still looks present and of the right length.
+fn corrupt_body(store: &FsStore, digest: &Digest) {
+    let path = store.object_path(digest);
+    let mut bytes = fs::read(&path).unwrap();
+    let last = bytes.len() - 1;
+    assert!(last >= HEADER_LEN, "the object has no body to damage");
+    bytes[last] ^= 0x40;
+    fs::write(&path, &bytes).unwrap();
+    assert_rejected(store, digest, "after damaging the body");
+    assert_eq!(
+        store.size(digest).unwrap(),
+        Header::read_from(&mut &bytes[..]).ok().map(|h| h.len)
+    );
+}
+
+#[test]
+fn a36_body_corrupt_object_survives_a_put_and_is_removed_then_put_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FsStore::open(dir.path()).unwrap();
+    let content = noise(23, 50_000);
+    let digest = put_bytes(&store, &content).unwrap();
+    let other = put_bytes(&store, b"an unrelated object").unwrap();
+    corrupt_body(&store, &digest);
+
+    // A plain put looks at the header only and keeps the damaged copy.
+    assert_eq!(put_bytes(&store, &content).unwrap(), digest);
+    assert_rejected(&store, &digest, "after a plain put");
+
+    assert!(store.remove(&digest).unwrap());
+    assert!(!store.contains(&digest).unwrap());
+    assert_eq!(store.verify(&digest).unwrap(), Verification::Missing);
+    assert_eq!(listed(&store), HashSet::from([other.clone()]));
+    // Nothing is left to remove, and nothing else was touched.
+    assert!(!store.remove(&digest).unwrap());
+    assert_eq!(get_bytes(&store, &other).unwrap(), b"an unrelated object");
+
+    assert_eq!(put_bytes(&store, &content).unwrap(), digest);
+    assert_eq!(get_bytes(&store, &digest).unwrap(), content);
+    assert_eq!(
+        store.verify(&digest).unwrap(),
+        Verification::Valid {
+            len: content.len() as u64
+        }
+    );
+    assert!(tmp_entries(&store).is_empty());
+}
+
+#[test]
+fn remove_ignores_liveness_and_grace_and_leaves_an_open_reader_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, _clock) = manual_store(dir.path());
+    let content = noise(29, 300_000);
+    let digest = put_bytes(&store, &content).unwrap();
+    // Just published: a collector would keep it for the whole grace period.
+    assert_eq!(store.gc(&|_| false, HOUR).unwrap().objects_in_grace, 1);
+
+    let mut reader = store.open(&digest).unwrap();
+    let mut head = vec![0u8; 1_000];
+    reader.read_exact(&mut head).unwrap();
+
+    assert!(store.remove(&digest).unwrap());
+    assert!(!store.contains(&digest).unwrap());
+    assert_eq!(store.stats().unwrap(), StoreStats::default());
+
+    let mut rest = Vec::new();
+    reader.read_to_end(&mut rest).unwrap();
+    head.extend_from_slice(&rest);
+    assert_eq!(head, content);
+}
+
+#[test]
+fn a36_repair_replaces_a_body_corrupt_object_and_only_that() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, clock) = manual_store(dir.path());
+    let content = noise(31, 80_000);
+    let digest = Digest::of_bytes(&content);
+
+    // Nothing stored yet: repair publishes.
+    assert_eq!(
+        store.repair(&digest, &mut &content[..]).unwrap(),
+        Repaired::Stored
+    );
+    assert_eq!(get_bytes(&store, &digest).unwrap(), content);
+
+    // Intact: the stored file is kept byte for byte, only made young again.
+    let path = store.object_path(&digest);
+    let stored = fs::read(&path).unwrap();
+    clock.advance(2 * HOUR);
+    assert_eq!(
+        store.repair(&digest, &mut &content[..]).unwrap(),
+        Repaired::Intact
+    );
+    assert_eq!(fs::read(&path).unwrap(), stored);
+    assert_eq!(store.gc(&|_| false, HOUR).unwrap().objects_in_grace, 1);
+
+    // Damaged body: replaced, and the replacement starts a new grace period.
+    corrupt_body(&store, &digest);
+    clock.advance(2 * HOUR);
+    assert!(matches!(
+        store.repair(&digest, &mut &content[..]).unwrap(),
+        Repaired::Replaced { reason } if !reason.is_empty()
+    ));
+    assert_eq!(get_bytes(&store, &digest).unwrap(), content);
+    assert_eq!(fs::read(&path).unwrap(), stored);
+    assert_eq!(store.gc(&|_| false, HOUR).unwrap().objects_in_grace, 1);
+
+    // Damaged header: replaced as well.
+    let mut bad = stored.clone();
+    bad[1] ^= 0xFF;
+    fs::write(&path, &bad).unwrap();
+    assert!(matches!(
+        store.repair(&digest, &mut &content[..]).unwrap(),
+        Repaired::Replaced { .. }
+    ));
+    assert_eq!(get_bytes(&store, &digest).unwrap(), content);
+    assert_eq!(
+        store.stats().unwrap(),
+        StoreStats {
+            objects: 1,
+            stored_bytes: stored.len() as u64
+        }
+    );
+    assert!(tmp_entries(&store).is_empty());
+}
+
+#[test]
+fn a36_repair_checks_the_supplied_copy_before_touching_the_stored_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = limited_store(dir.path(), 100_000);
+    let content = text(40_000);
+    let digest = put_bytes(&store, &content).unwrap();
+    corrupt_body(&store, &digest);
+    let damaged = fs::read(store.object_path(&digest)).unwrap();
+
+    // Wrong content, in either form, repairs nothing.
+    let wrong = text(40_001);
+    assert!(matches!(
+        store.repair(&digest, &mut &wrong[..]),
+        Err(StoreError::DigestMismatch { .. })
+    ));
+    let wrong_stored = stored_form(&wrong);
+    assert!(matches!(
+        store.repair_compressed(&digest, &mut &wrong_stored[..]),
+        Err(StoreError::DigestMismatch { .. })
+    ));
+    // So does the damaged copy itself, offered back as the replacement.
+    assert_invalid_data(
+        store.repair_compressed(&digest, &mut &damaged[..]),
+        "damaged replacement",
+    );
+    let too_large = text(100_001);
+    assert!(matches!(
+        store.repair(&Digest::of_bytes(&too_large), &mut &too_large[..]),
+        Err(StoreError::TooLarge { limit: 100_000 })
+    ));
+    assert_eq!(fs::read(store.object_path(&digest)).unwrap(), damaged);
+    assert!(tmp_entries(&store).is_empty());
+
+    // A good copy in the stored format replaces it without recompression.
+    let good = stored_form(&content);
+    assert!(matches!(
+        store.repair_compressed(&digest, &mut &good[..]).unwrap(),
+        Repaired::Replaced { .. }
+    ));
+    assert_eq!(fs::read(store.object_path(&digest)).unwrap(), good);
+    assert_eq!(get_bytes(&store, &digest).unwrap(), content);
+    assert_eq!(
+        store.repair_compressed(&digest, &mut &good[..]).unwrap(),
+        Repaired::Intact
+    );
+    assert!(tmp_entries(&store).is_empty());
+}
+
+#[test]
+fn concurrent_repairs_and_puts_of_a_damaged_object_leave_it_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(FsStore::open(dir.path()).unwrap());
+    let content = Arc::new(noise(37, 200_000));
+    let digest = put_bytes(&*store, &content).unwrap();
+    corrupt_body(&store, &digest);
+
+    let start = Arc::new(Barrier::new(8));
+    let workers: Vec<_> = (0..8)
+        .map(|index| {
+            let (store, content, digest, start) = (
+                Arc::clone(&store),
+                Arc::clone(&content),
+                digest.clone(),
+                Arc::clone(&start),
+            );
+            std::thread::spawn(move || {
+                start.wait();
+                if index % 2 == 0 {
+                    Some(store.repair(&digest, &mut &content[..]).unwrap())
+                } else {
+                    put_bytes(&*store, &content).unwrap();
+                    None
+                }
+            })
+        })
+        .collect();
+    let outcomes: Vec<Repaired> = workers
+        .into_iter()
+        .filter_map(|worker| worker.join().unwrap())
+        .collect();
+    // The exclusive lock lets exactly one repair find the damage.
+    let replaced = outcomes
+        .iter()
+        .filter(|outcome| matches!(outcome, Repaired::Replaced { .. }))
+        .count();
+    assert_eq!(replaced, 1, "{outcomes:?}");
+    assert!(
+        outcomes
+            .iter()
+            .all(|outcome| matches!(outcome, Repaired::Replaced { .. } | Repaired::Intact)),
+        "{outcomes:?}"
+    );
+    assert_eq!(get_bytes(&*store, &digest).unwrap(), *content);
     assert!(tmp_entries(&store).is_empty());
 }
 

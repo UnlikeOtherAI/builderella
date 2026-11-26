@@ -225,10 +225,14 @@ const REASONS: Record<string, string> = {
   machine_paused: 'Machine paused',
   machine_draining: 'Machine draining',
   on_battery: 'Machine on battery',
+  overheated: 'Machine too hot',
+  machine_upgrading: 'Machine being upgraded',
   builds_disabled: 'Builds disabled',
   project_not_allowed: 'Project not allowed on this machine',
   machine_concurrency_limit: 'Machine at its job limit',
   project_concurrency_limit: 'Project at its job limit',
+  environment_quota: 'Project at its environment limit',
+  placement_constraint: 'Not the machine, pool or platform the job asked for',
   fair_share: 'Waiting its turn (fair share)',
   reserved_for_older_job: 'Capacity held for an older job',
   previous_attempt_unresolved: 'Previous attempt not resolved',
@@ -249,6 +253,7 @@ export function reasonTone(code: string): Tone {
       return 'ok';
     case 'no_compatible_machine':
     case 'wrong_platform':
+    case 'placement_constraint':
     case 'missing_capability':
     case 'machine_too_small':
     case 'project_not_allowed':

@@ -1,6 +1,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Fixtures, QueueReason } from '../api/schemas';
+import { Fixtures, QueueReason, QueueReasonCode } from '../api/schemas';
+import { reasonLabel, reasonTone } from '../lib/labels';
 import { rawFixtures } from '../test/fixtures';
 import { QueueReasonView } from './QueueReasonView';
 
@@ -39,6 +40,47 @@ describe('QueueReasonView', () => {
     expect(within(permanent).getByText('handheld-1')).toBeTruthy();
     expect(within(permanent).getByText('Machine too small')).toBeTruthy();
     expect(within(permanent).queryByText('builder-2')).toBeNull();
+  });
+
+  it('has a plain-language label for every reason code the controller sends', () => {
+    for (const code of QueueReasonCode.known) {
+      expect(reasonLabel(code), code).not.toBe(code);
+      expect(reasonLabel(code), code).not.toContain('_');
+    }
+  });
+
+  it('names heat, upgrades, environment limits and placement choices as themselves', () => {
+    const codes = new Set<string>();
+    for (const entry of fixtures.queue.entries) {
+      const reason = entry.job.queue_reason;
+      if (!reason) continue;
+      codes.add(reason.code);
+      for (const blocker of reason.blockers) codes.add(blocker.code);
+    }
+    for (const code of ['overheated', 'machine_upgrading', 'environment_quota', 'placement_constraint']) {
+      expect(codes.has(code), `no fixture uses ${code}`).toBe(true);
+    }
+
+    render(<QueueReasonView reason={reasonOf('overheated')} />);
+    // Once as the heading, once on the machine that is too hot.
+    expect(screen.getAllByText('Machine too hot')).toHaveLength(2);
+    cleanup();
+
+    render(<QueueReasonView reason={reasonOf('environment_quota')} />);
+    expect(screen.getByText('Project at its environment limit')).toBeTruthy();
+    expect(screen.queryByText(/machines? checked/)).toBeNull();
+    cleanup();
+
+    render(<QueueReasonView reason={reasonOf('reserved_for_older_job')} />);
+    expect(screen.getByText('Machine being upgraded')).toBeTruthy();
+    cleanup();
+
+    // A machine the job did not ask for stays excluded however long it waits.
+    render(<QueueReasonView reason={reasonOf('machine_paused')} />);
+    const permanent = screen.getByText('Permanent: waiting will not change these')
+      .nextElementSibling as HTMLElement;
+    expect(within(permanent).getByText('Not the machine, pool or platform the job asked for')).toBeTruthy();
+    expect(reasonTone('placement_constraint')).toBe('bad');
   });
 
   it('shows no machine list when nothing is blocking', () => {

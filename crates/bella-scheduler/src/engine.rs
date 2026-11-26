@@ -560,7 +560,7 @@ pub(crate) fn job_gate(
         && environments >= max
     {
         return Some(QueueReason::new(
-            Code::ProjectConcurrencyLimit,
+            Code::EnvironmentQuota,
             format!(
                 "project `{}` keeps {environments} of at most {max} environments, and this \
                  job would start another",
@@ -580,16 +580,18 @@ fn rank(code: Code) -> u8 {
         Code::MissingCapability => 3,
         Code::OfferRejected => 4,
         Code::ForegroundProtection => 5,
-        Code::MemoryPressure => 6,
-        Code::DiskLow => 7,
-        Code::OnBattery => 8,
-        Code::MachinePaused => 9,
-        Code::MachineDraining => 10,
-        Code::CleanupPending => 11,
-        Code::Quarantined => 12,
-        Code::StaleTelemetry => 13,
-        Code::MachineUnreachable => 14,
-        _ => 15,
+        Code::Overheated => 6,
+        Code::MemoryPressure => 7,
+        Code::DiskLow => 8,
+        Code::OnBattery => 9,
+        Code::MachinePaused => 10,
+        Code::MachineUpgrading => 11,
+        Code::MachineDraining => 12,
+        Code::CleanupPending => 13,
+        Code::Quarantined => 14,
+        Code::StaleTelemetry => 15,
+        Code::MachineUnreachable => 16,
+        _ => 17,
     }
 }
 
