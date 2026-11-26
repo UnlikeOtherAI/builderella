@@ -9,8 +9,8 @@ use bella_cloud::{
     Refusal, Registration, RequestMode, ResourceKind, RetryBlocker, Scope, ScopeKind, SimProvider,
 };
 use bella_core::job::{CloudMode, Outcome, Priority};
-use bella_core::{CloudIntentId, FleetId, JobId, ManualClock, ProjectId};
-use common::{HOUR, MINUTE, SMALL_HOLD, SMALL_HOURLY, T0, World, allowance, denial, refusal};
+use bella_core::{CloudIntentId, FleetId, JobId, ManualClock};
+use common::{HOUR, MINUTE, SMALL_HOLD, T0, World, allowance, denial, refusal};
 use rusqlite::Connection;
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
@@ -1052,12 +1052,17 @@ fn request_with_new_id(request: &NewCapacity) -> NewCapacity {
     }
 }
 
-/// Used by the fixture's type checks; keeps the unused-import lint honest
-/// about what the scenarios above rely on.
+/// The starting point of every scenario above: nothing is allowed, so
+/// nothing can be requested.
 #[test]
 fn fixture_starts_with_nothing_allowed() {
     let world = World::new();
     assert_eq!(world.now(), T0);
     assert_eq!(world.count("cloud_allowances"), 0);
-    let _: (&ProjectId, u64) = (&world.project, SMALL_HOURLY);
+    assert!(world.engine().budgets().unwrap().is_empty());
+    let error = world
+        .engine()
+        .request_capacity(&world.request())
+        .unwrap_err();
+    assert!(matches!(refusal(&error), Refusal::NoAllowance { .. }));
 }
