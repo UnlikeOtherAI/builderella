@@ -372,10 +372,16 @@ pub enum QueueReasonCode {
     MachinePaused,
     MachineDraining,
     OnBattery,
+    Overheated,
+    MachineUpgrading,
     BuildsDisabled,
     ProjectNotAllowed,
     MachineConcurrencyLimit,
     ProjectConcurrencyLimit,
+    /// The project already holds its allowed number of environments.
+    EnvironmentQuota,
+    /// Excluded by the job's own machine, pool or required-platform choice.
+    PlacementConstraint,
     FairShare,
     /// Capacity is being held back so an older, larger job can start.
     ReservedForOlderJob,

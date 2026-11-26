@@ -1532,6 +1532,17 @@ impl JobScope {
 }
 
 impl Scope for JobScope {
+    fn limit_hits(&self) -> Result<Option<crate::LimitHits>, ContainError> {
+        match self.limit_events() {
+            Ok(events) => Ok(Some(crate::LimitHits {
+                memory: events.memory_limit_hits,
+                processes: events.process_limit_hits,
+            })),
+            Err(ContainError::Unsupported(_)) => Ok(None),
+            Err(other) => Err(other),
+        }
+    }
+
     fn identity(&self) -> ScopeIdentity {
         ScopeIdentity {
             kind: ScopeKind::WindowsJob,

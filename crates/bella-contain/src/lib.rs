@@ -95,6 +95,15 @@ pub struct Spawned {
     pub stderr: Box<dyn Read + Send>,
 }
 
+/// Limit violations observed in a scope so far.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LimitHits {
+    /// Times the memory limit stopped or killed a member.
+    pub memory: u64,
+    /// Times the process limit refused a new process.
+    pub processes: u64,
+}
+
 /// Who is still alive in a scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Membership {
@@ -119,6 +128,14 @@ pub trait Scope: Send {
     fn usage(&self) -> Result<UsageSummary, ContainError>;
 
     fn members(&self) -> Result<Membership, ContainError>;
+
+    /// Limit violations so far, so a job killed by its memory limit is
+    /// reported as resource exhaustion and not as an ordinary failure.
+    /// `Ok(None)` when the adapter cannot observe them. Read it before
+    /// [`Scope::destroy`].
+    fn limit_hits(&self) -> Result<Option<LimitHits>, ContainError> {
+        Ok(None)
+    }
 
     /// Change limits on a live scope. `Unsupported` when the adapter cannot.
     fn set_limits(&mut self, limits: &Limits) -> Result<(), ContainError>;

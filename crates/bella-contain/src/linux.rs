@@ -792,6 +792,16 @@ impl CgroupScope {
 }
 
 impl Scope for CgroupScope {
+    fn limit_hits(&self) -> Result<Option<crate::LimitHits>, ContainError> {
+        let processes = read_kv(&self.path.join("pids.events"), "max")
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+        Ok(self
+            .oom_kills()
+            .map(|memory| crate::LimitHits { memory, processes }))
+    }
+
     /// `detail` is the cgroup directory and never changes.
     fn identity(&self) -> ScopeIdentity {
         ScopeIdentity {
