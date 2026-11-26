@@ -482,22 +482,23 @@ impl<'a> Pass<'a> {
     }
 
     /// Among machines the job is only waiting for room on, the one it would
-    /// fit soonest: large enough under the current budget, then the
-    /// smallest part of the request still missing, then fewest attempts to
-    /// wait for, then the lowest id.
+    /// fit soonest: the smallest part of the request still missing, then
+    /// fewest attempts to wait for, then the lowest id.
+    ///
+    /// A machine whose current budget is below the request is not a
+    /// candidate: draining it would not let the job start, so it goes on
+    /// serving work that does fit until the budget recovers.
     fn machine_to_hold(&self, job: &QueuedJob, holdable: &[usize]) -> Option<usize> {
         let peak = &job.spec.envelope.peak;
-        holdable.iter().copied().min_by_key(|&mi| {
-            let load = &self.loads[mi];
-            let too_small_now = !peak.fits_within(&load.capacity);
-            let free = load.capacity.saturating_sub(&load.reserved);
-            (
-                too_small_now,
-                missing_fraction(peak, &free),
-                load.held_attempts,
-                mi,
-            )
-        })
+        holdable
+            .iter()
+            .copied()
+            .filter(|&mi| peak.fits_within(&self.loads[mi].capacity))
+            .min_by_key(|&mi| {
+                let load = &self.loads[mi];
+                let free = load.capacity.saturating_sub(&load.reserved);
+                (missing_fraction(peak, &free), load.held_attempts, mi)
+            })
     }
 }
 

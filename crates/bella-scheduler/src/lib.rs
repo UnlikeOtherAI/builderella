@@ -64,18 +64,26 @@
 //!    attempts goes first, then the one whose next job is oldest.
 //! 4. **Age.** Within a session, oldest first.
 //!
+//! Shares are computed from what is held when the call is made; there is
+//! no usage history. When nothing is held (for example a fleet that runs a
+//! single attempt at a time, at the moment its slot frees) bands and
+//! projects tie, and the order falls back to the higher band and then the
+//! oldest job. The starvation threshold below bounds the wait in that case.
+//!
 //! # Backfill and starvation
 //!
 //! A job that does not fit is skipped, and later jobs that do fit are
 //! offered: small work passes large work. To bound how long that can go
 //! on, jobs that have waited `starvation_threshold_ms` are considered
 //! before all others (in the same fair order among themselves), and one
-//! that still cannot start because of capacity alone claims a machine: the
-//! machine able to take it under the current budget where the smallest
-//! part of its request is still missing. For the rest of the call no other
-//! job is placed there (`ReservedForOlderJob`). The claim is recomputed
-//! from scratch each call, and since nothing new lands on the claimed
-//! machine, its reservations only drain until the job fits.
+//! that still cannot start because of capacity alone claims a machine:
+//! among those whose current capacity could hold it, the one where the
+//! smallest part of its request is still missing. For the rest of the call
+//! no other job is placed there (`ReservedForOlderJob`). The claim is
+//! recomputed from scratch each call, and since nothing new lands on the
+//! claimed machine, its reservations only drain until the job fits. Each
+//! machine is claimed by at most one job, and a machine whose protection
+//! budget is currently below the request is never claimed.
 //!
 //! # Placement
 //!

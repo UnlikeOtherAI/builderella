@@ -66,6 +66,8 @@ pub struct QueuedJob {
     /// build hosts is pinned to it.
     pub origin_platform: Platform,
     pub queued_at: UnixMillis,
+    /// Attempts already made. Carried for the caller; a retried job keeps
+    /// its place by `queued_at` and is ordered like any other.
     pub attempts_made: u32,
     /// `Some(why)` when the snapshot cannot be materialized on Windows.
     pub snapshot_windows_incompatible: Option<String>,
