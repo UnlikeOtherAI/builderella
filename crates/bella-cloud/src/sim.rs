@@ -450,6 +450,8 @@ impl Inner {
             created.push(entry.view(now));
             self.resources.insert(id, entry);
         }
+        // Same order as a listing, so a repeated create answers identically.
+        created.sort_by(|a, b| a.id.cmp(&b.id));
         created
     }
 
