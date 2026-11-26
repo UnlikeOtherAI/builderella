@@ -415,6 +415,40 @@ in-process on port 0.
   has reconnected and reconciled.
 * Covers end to end: A01, A02, A12, A13, A14, A15, A21, A22, A37, A59, A60, A61.
 
+Wire details the client and the controller share:
+
+* **Authentication.** `authorization: Bearer <token>` on every route except
+  `GET /healthz` and `POST /enroll`, which carries the pairing code in its
+  body. The worker WebSocket upgrade request carries the machine token the
+  same way.
+* **Errors.** A non-2xx response has a JSON `ApiError` body and the status
+  from `ErrorCode::http_status`.
+* **Objects.** `PUT /objects/{digest}` with
+  `content-type: application/vnd.builderella.object` carries the
+  `bella_store::format` encoding (header plus one zstd frame) and is stored
+  with `put_compressed`; with `application/octet-stream` it carries the raw
+  bytes. Either way the controller verifies the digest before publishing
+  and answers `204`, or `409` with `ApiError` on a mismatch. An object that
+  already exists is `204` without reading the body further.
+  `GET /objects/{digest}` answers with the stored encoding and
+  `content-type: application/vnd.builderella.object`; `?raw=1` answers with
+  the decoded bytes as `application/octet-stream`.
+* **Snapshots.** The controller stores the manifest's canonical bytes as an
+  object; its digest is the snapshot id and `manifest_digest`.
+* **Idempotency.** `POST /jobs` reads the `idempotency-key` header.
+* **Long poll.** `GET /jobs/{id}/wait` holds for at most 60 s.
+* **Events.** `GET /events` is `text/event-stream`. Each event has
+  `id: <seq>`, `event: <kind>` and `data: <EventRecord JSON>`. With
+  `?after=<seq>` (or a `last-event-id` header) the stream first replays
+  everything after that sequence; without it, only events from now on are
+  sent. A comment line is sent every 15 s as a keep-alive.
+* **Worker socket.** Text frames, one JSON `WorkerMsg` or `ControllerMsg`
+  each. The first frame from the worker is `Hello`; the controller answers
+  with `Welcome` and then a `Reconcile` command. WebSocket ping/pong is
+  used for liveness in addition to heartbeats.
+* **Dashboard.** Served at `/` with fragment routes (`/#/jobs/<id>`), so
+  only `index.html` and `assets/` need serving.
+
 ### 6.17 bella-worker
 
 One process per physical machine.
