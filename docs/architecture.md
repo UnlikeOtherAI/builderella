@@ -68,7 +68,8 @@ automatic worker updates are out of scope and listed in §9.
 | `bella-cloud` | Cloud intentions, budget holds, overflow policy. |
 | `bella-controller` | HTTP API, worker hub, dispatch loop, embedded dashboard. |
 | `bella-worker` | Worker daemon: admission, runner, logs, cleanup. |
-| `bella-client` | REST client and HTTP object store. |
+| `bella-client` | REST client, event stream, HTTP object store and worker socket. |
+| `bella-service` | Installs and runs the controller and worker as OS services. |
 | `bella-cli` | The `bella` binary. |
 | `dashboard/` | Web UI. |
 
