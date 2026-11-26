@@ -171,7 +171,7 @@ use windows_sys::Win32::System::Threading::{
     EXTENDED_STARTUPINFO_PRESENT, GetActiveProcessorCount, GetCurrentProcess, GetExitCodeProcess,
     INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
     NORMAL_PRIORITY_CLASS, OpenProcess, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION,
-    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
     QueryFullProcessImageNameW, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
     TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
@@ -544,6 +544,38 @@ fn open_member(job: HANDLE, pid: u32) -> Option<OwnedHandle> {
     // SAFETY: both handles are open and `in_job` is a valid out pointer.
     let ok = unsafe { IsProcessInJob(raw(&handle), job, &mut in_job) };
     (ok != 0 && in_job != 0).then_some(handle)
+}
+
+/// Ends the keeper processes in `keeper_job` one by one.
+///
+/// The job itself is not terminated: on some Windows versions a job that
+/// went through `TerminateJobObject` refuses every later
+/// `AssignProcessToJobObject` with "access denied", and a scope whose keeper
+/// is ended this way may need a new keeper in the same job later (another
+/// handle to the scope spawns again). Best effort: a keeper that cannot be
+/// ended keeps the job name alive, which only delays its release.
+fn end_keepers(keeper_job: HANDLE) {
+    let Ok(pids) = process_ids(keeper_job) else {
+        return;
+    };
+    for pid in pids {
+        let access = PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION;
+        // SAFETY: no pointers are involved; failure is reported as null.
+        let handle = unsafe { OpenProcess(access, 0, pid) };
+        if handle.is_null() {
+            continue;
+        }
+        // SAFETY: a non-null handle from OpenProcess is ours to close.
+        let process = unsafe { owned(handle) };
+        let mut in_job = 0;
+        // SAFETY: both handles are open and `in_job` is a valid out pointer.
+        // The check keeps a reused process id from being ended.
+        let ok = unsafe { IsProcessInJob(raw(&process), keeper_job, &mut in_job) };
+        if ok != 0 && in_job != 0 {
+            // SAFETY: the process handle is open with PROCESS_TERMINATE.
+            unsafe { TerminateProcess(raw(&process), 0) };
+        }
+    }
 }
 
 fn image_path(process: HANDLE) -> Option<PathBuf> {
@@ -1752,8 +1784,7 @@ impl Drop for JobScope {
     /// handle and the job disappears. A scope with members keeps its keeper.
     fn drop(&mut self) {
         if accounting(self.handle()).is_ok_and(|accounting| accounting.ActiveProcesses == 0) {
-            // SAFETY: the keeper job handle is open; it holds only the keeper.
-            unsafe { TerminateJobObject(raw(&self.keeper_job), 0) };
+            end_keepers(raw(&self.keeper_job));
         }
     }
 }
