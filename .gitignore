@@ -9,5 +9,3 @@ dashboard/dist/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
-# Regenerated and committed when the first integration lands.
-Cargo.lock
