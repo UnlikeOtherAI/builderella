@@ -16,6 +16,11 @@ libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 
+# The cgroup adapter's own use of libc, stated separately from the
+# process-group adapter's.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile.workspace = true
 
