@@ -11,15 +11,60 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
+use std::sync::{Condvar, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 pub const BELLA: &str = env!("CARGO_BIN_EXE_bella");
 
-/// How long a condition may take to become true before a test fails.
-pub const PATIENCE: Duration = Duration::from_secs(60);
+/// How long a condition may take to become true before a test fails. An
+/// upper bound for slow, loaded hosts; conditions normally hold in seconds.
+pub const PATIENCE: Duration = Duration::from_secs(120);
 /// How long one `bella` client command may take.
-const COMMAND_LIMIT: Duration = Duration::from_secs(120);
+const COMMAND_LIMIT: Duration = Duration::from_secs(300);
+/// Fleets that may run at once, so that enrollment probes and workers of
+/// parallel tests do not starve each other. `BELLA_E2E_PARALLEL` overrides.
+const DEFAULT_PARALLEL_FLEETS: usize = 4;
+
+/// A counting semaphore limiting how many fleets run at once.
+struct Slots {
+    used: Mutex<usize>,
+    freed: Condvar,
+}
+
+static SLOTS: Slots = Slots {
+    used: Mutex::new(0),
+    freed: Condvar::new(),
+};
+
+/// One of the fleet slots, held for the lifetime of a [`Fleet`].
+pub struct Slot(());
+
+impl Slot {
+    fn acquire() -> Slot {
+        let limit = std::env::var("BELLA_E2E_PARALLEL")
+            .ok()
+            .and_then(|text| text.parse().ok())
+            .filter(|limit| *limit > 0)
+            .unwrap_or(DEFAULT_PARALLEL_FLEETS);
+        let mut used = SLOTS.used.lock().unwrap_or_else(PoisonError::into_inner);
+        while *used >= limit {
+            used = SLOTS
+                .freed
+                .wait(used)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        *used += 1;
+        Slot(())
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let mut used = SLOTS.used.lock().unwrap_or_else(PoisonError::into_inner);
+        *used -= 1;
+        SLOTS.freed.notify_one();
+    }
+}
 
 /// What a finished `bella` command printed and returned.
 #[derive(Debug)]
@@ -293,6 +338,7 @@ pub struct Fleet {
     pub controller_dir: PathBuf,
     /// Declared last: removed after every process above has stopped.
     pub root: tempfile::TempDir,
+    _slot: Slot,
 }
 
 pub struct Options {
@@ -311,6 +357,7 @@ impl Default for Options {
 
 impl Fleet {
     pub fn start(options: Options) -> Fleet {
+        let slot = Slot::acquire();
         let root = tempfile::Builder::new()
             .prefix("bella-e2e-")
             .tempdir()
@@ -325,6 +372,7 @@ impl Fleet {
             port: 0,
             controller_dir,
             root,
+            _slot: slot,
         };
         fleet.start_controller("127.0.0.1:0");
         fleet
