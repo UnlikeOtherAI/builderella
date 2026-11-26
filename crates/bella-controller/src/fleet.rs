@@ -14,10 +14,10 @@ use std::sync::Arc;
 /// A capability a worker reports when its work volume tells names apart
 /// that differ only by case. Without it the operating system's usual
 /// default is assumed.
-pub(crate) const CAP_CASE_SENSITIVE_FS: &str = "fs-case-sensitive";
+pub const CAP_CASE_SENSITIVE_FS: &str = "fs-case-sensitive";
 /// A capability a worker reports when it can create symbolic links on its
 /// work volume.
-pub(crate) const CAP_SYMLINKS: &str = "fs-symlinks";
+pub const CAP_SYMLINKS: &str = "fs-symlinks";
 
 fn declared(inventory: &Inventory, name: &str) -> Option<bool> {
     inventory
