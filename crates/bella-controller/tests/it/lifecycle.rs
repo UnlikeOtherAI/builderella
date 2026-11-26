@@ -1142,7 +1142,7 @@ async fn running_attempts_get_their_authority_renewed() {
     worker.ack(&start_id).await;
     harness.advance(Duration::from_secs(10));
     worker.heartbeat().await;
-    let renewed = worker
+    let (_, renewed) = worker
         .expect_command("RenewAuthority", |command| match command {
             ControllerCommand::RenewAuthority { attempt, authority }
                 if *attempt == offer.attempt && authority.valid_until > granted.valid_until =>
