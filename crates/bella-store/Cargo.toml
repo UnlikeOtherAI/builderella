@@ -9,7 +9,9 @@ repository.workspace = true
 
 [dependencies]
 bella-core.workspace = true
-thiserror.workspace = true
+tracing.workspace = true
+# Builds the bundled zstd C source; no legacy formats or dictionary builder.
+zstd = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 tempfile.workspace = true
