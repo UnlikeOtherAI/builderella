@@ -292,11 +292,25 @@ impl Harness {
     }
 }
 
+/// Lift the soft open-file limit to the hard one, once per test process.
+/// The tests run many controllers side by side, and macOS gives processes a
+/// soft limit of 256 (launchd's default), which they exceed.
+fn raise_open_file_limit() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        #[cfg(unix)]
+        if let Err(error) = rlimit::increase_nofile_limit(u64::MAX) {
+            eprintln!("could not raise the open-file limit: {error}");
+        }
+    });
+}
+
 async fn launch(
     dir: &TempDir,
     clock: &ManualClock,
     configure: &(dyn Fn(&mut ControllerConfig) + Send + Sync),
 ) -> ControllerHandle {
+    raise_open_file_limit();
     let mut config = ControllerConfig::new(dir.path(), "127.0.0.1:0".parse().unwrap());
     config.tls = Tls::Disabled;
     config.clock = Arc::new(clock.clone());
