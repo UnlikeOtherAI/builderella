@@ -81,32 +81,71 @@ macro_rules! id_type {
     };
 }
 
-id_type!(/// Administrative boundary of one fleet.
-    FleetId, "flt");
-id_type!(/// One worker installation. Stable across reboots; never derived from a hostname.
-    MachineId, "mch");
-id_type!(/// One boot of a machine. Process identities from another boot are invalid.
-    BootId, "boot");
-id_type!(/// A human, automation or service identity.
-    PrincipalId, "prn");
-id_type!(/// A logical project, independent of any checkout path.
-    ProjectId, "prj");
-id_type!(/// One coding session, used for attribution and fair sharing.
-    SessionId, "ses");
-id_type!(/// User intent for one snapshot and one frozen specification.
-    JobId, "job");
-id_type!(/// One execution of a job.
-    AttemptId, "att");
-id_type!(/// A running app/services/debug context that outlives its build steps.
-    EnvironmentId, "env");
-id_type!(/// A quantitative or exclusive resource allocation.
-    ReservationId, "rsv");
-id_type!(/// One output with provenance.
-    ArtifactId, "art");
-id_type!(/// One controller-to-worker command; duplicates are acknowledged idempotently.
-    CommandId, "cmd");
-id_type!(/// A durable request to create cloud capacity.
-    CloudIntentId, "cld");
+id_type!(
+    /// Administrative boundary of one fleet.
+    FleetId,
+    "flt"
+);
+id_type!(
+    /// One worker installation. Stable across reboots; never derived from a hostname.
+    MachineId,
+    "mch"
+);
+id_type!(
+    /// One boot of a machine. Process identities from another boot are invalid.
+    BootId,
+    "boot"
+);
+id_type!(
+    /// A human, automation or service identity.
+    PrincipalId,
+    "prn"
+);
+id_type!(
+    /// A logical project, independent of any checkout path.
+    ProjectId,
+    "prj"
+);
+id_type!(
+    /// One coding session, used for attribution and fair sharing.
+    SessionId,
+    "ses"
+);
+id_type!(
+    /// User intent for one snapshot and one frozen specification.
+    JobId,
+    "job"
+);
+id_type!(
+    /// One execution of a job.
+    AttemptId,
+    "att"
+);
+id_type!(
+    /// A running app/services/debug context that outlives its build steps.
+    EnvironmentId,
+    "env"
+);
+id_type!(
+    /// A quantitative or exclusive resource allocation.
+    ReservationId,
+    "rsv"
+);
+id_type!(
+    /// One output with provenance.
+    ArtifactId,
+    "art"
+);
+id_type!(
+    /// One controller-to-worker command; duplicates are acknowledged idempotently.
+    CommandId,
+    "cmd"
+);
+id_type!(
+    /// A durable request to create cloud capacity.
+    CloudIntentId,
+    "cld"
+);
 
 /// SHA-256 content digest, lowercase hex.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
