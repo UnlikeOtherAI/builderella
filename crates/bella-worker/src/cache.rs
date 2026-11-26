@@ -1,8 +1,8 @@
 //! Read-through object cache in front of the controller's object store.
 
+use bella_core::AttemptId;
 use bella_core::ids::Digest;
 use bella_core::store::{ObjectStore, StoreError};
-use bella_core::AttemptId;
 use bella_store::{FsStore, GcReport, Verification};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
@@ -78,15 +78,8 @@ impl ObjectCache {
     pub(crate) fn discard_if_corrupt(&self, digest: &Digest) -> bool {
         match self.local.verify(digest) {
             Ok(Verification::Corrupt { reason }) => {
-                // Documented layout of the store: objects/<shard>/<digest>.
-                let path = self
-                    .local
-                    .root()
-                    .join("objects")
-                    .join(digest.shard())
-                    .join(digest.as_str());
                 tracing::warn!(%digest, %reason, "removing a damaged object from the local cache");
-                std::fs::remove_file(path).is_ok()
+                matches!(self.local.remove(digest), Ok(true))
             }
             _ => false,
         }
@@ -129,5 +122,50 @@ impl ObjectStore for ObjectCache {
             Some(size) => Ok(Some(size)),
             None => self.remote.size(digest),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bella_core::store::{MemStore, get_bytes, put_bytes};
+
+    fn cache() -> (tempfile::TempDir, Arc<MemStore>, ObjectCache) {
+        let dir = tempfile::tempdir().unwrap();
+        let remote = Arc::new(MemStore::new());
+        let cache = ObjectCache::open(&dir.path().join("cache"), remote.clone()).unwrap();
+        (dir, remote, cache)
+    }
+
+    #[test]
+    fn objects_are_fetched_once_and_served_locally() {
+        let (_dir, remote, cache) = cache();
+        let digest = put_bytes(remote.as_ref(), b"source file").unwrap();
+        assert!(!cache.has_local(&digest));
+        assert_eq!(get_bytes(&cache, &digest).unwrap(), b"source file");
+        assert!(cache.has_local(&digest));
+        // Uploads go to the remote store, not into the cache.
+        let uploaded = cache.put(&mut &b"artifact"[..], None).unwrap().0;
+        assert!(remote.contains(&uploaded).unwrap());
+        assert!(!cache.has_local(&uploaded));
+    }
+
+    /// a46 at the worker's level: collection never removes an object that
+    /// a held attempt still needs, however old it is.
+    #[test]
+    fn a46_collection_spares_objects_pinned_by_held_attempts() {
+        let (_dir, remote, cache) = cache();
+        let needed = put_bytes(remote.as_ref(), b"needed").unwrap();
+        let spare = put_bytes(remote.as_ref(), b"spare").unwrap();
+        get_bytes(&cache, &needed).unwrap();
+        get_bytes(&cache, &spare).unwrap();
+        let attempt = AttemptId::derive(b"held");
+        cache.pin(&attempt, [needed.clone()]);
+        cache.gc(Duration::ZERO).unwrap();
+        assert!(cache.has_local(&needed), "a pinned object was collected");
+        assert!(!cache.has_local(&spare), "an unneeded object was kept");
+        cache.unpin(&attempt);
+        cache.gc(Duration::ZERO).unwrap();
+        assert!(!cache.has_local(&needed));
     }
 }

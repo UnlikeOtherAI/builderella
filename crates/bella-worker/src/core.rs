@@ -9,9 +9,7 @@ use crate::spool::LogHub;
 use crate::{CACHE_DIR, JOURNAL_FILE, SPOOL_DIR, Tuning, WorkerConfig};
 use bella_contain::{ContainError, Containment, Limits, Scope};
 use bella_core::job::{Outcome, QueueReasonCode};
-use bella_core::machine::{
-    AvailabilityFlag, Inventory, LocalControl, MachinePolicy, Telemetry,
-};
+use bella_core::machine::{AvailabilityFlag, Inventory, LocalControl, MachinePolicy, Telemetry};
 use bella_core::platform::Os;
 use bella_core::protocol::{
     AttemptEvent, AttemptRef, CommandEnvelope, CommandResult, ControllerCommand, ControllerMsg,
@@ -588,7 +586,11 @@ impl Core {
     }
 
     /// Journal one event of an attempt and queue it for the controller.
-    pub(crate) fn emit(&self, attempt: &AttemptRef, event: AttemptEvent) -> Result<(), JournalError> {
+    pub(crate) fn emit(
+        &self,
+        attempt: &AttemptRef,
+        event: AttemptEvent,
+    ) -> Result<(), JournalError> {
         self.tx(|tx| tx.append_event(attempt, event.clone()))?;
         self.events_pending(&attempt.attempt_id);
         Ok(())
@@ -627,13 +629,17 @@ impl Core {
                     self,
                     record,
                     "the machine restarted while the attempt was running",
-                    Some("machine rebooted: the boot id changed, so no process of the attempt can have survived"),
+                    Some(
+                        "machine rebooted: the boot id changed, so no process of the attempt can have survived",
+                    ),
                 ),
                 RecoveryAction::ResumeUnspawned => runner::recover(
                     self,
                     record,
                     "the worker restarted before the attempt started any process",
-                    Some("no containment scope was created for the attempt, so it never had a process"),
+                    Some(
+                        "no containment scope was created for the attempt, so it never had a process",
+                    ),
                 ),
                 RecoveryAction::Readopt => runner::recover(
                     self,
@@ -694,10 +700,7 @@ impl Core {
             .spawn(move || {
                 loop {
                     core.tick();
-                    let stopping = core
-                        .stopping
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner);
+                    let stopping = core.stopping.lock().unwrap_or_else(PoisonError::into_inner);
                     if *stopping {
                         return;
                     }
@@ -725,12 +728,12 @@ impl Core {
         sample
     }
 
-    /// One pass of the local protection loop. It needs no controller.
-    pub(crate) fn tick(self: &Arc<Self>) {
-        let now = self.clock.now();
-
-        // Authority and offer expiry first: after a sleep or a clock jump
-        // stale work is stopped before anything else is decided.
+    /// Stop every attempt whose execution authority ended and drop every
+    /// offer that expired, as of `now`. Runs first on every protection pass
+    /// and before every command, so that after a sleep or a clock jump no
+    /// command (a renewal included) is applied before stale work is
+    /// stopped.
+    fn enforce_authority(&self, now: UnixMillis) {
         match self.journal.expire(now) {
             Ok(report) => {
                 for offer in report.released_offers {
@@ -750,6 +753,12 @@ impl Core {
             }
             Err(error) => tracing::warn!(%error, "could not check execution authorities"),
         }
+    }
+
+    /// One pass of the local protection loop. It needs no controller.
+    pub(crate) fn tick(self: &Arc<Self>) {
+        let now = self.clock.now();
+        self.enforce_authority(now);
         let control = self.journal.local_control().ok();
 
         let handles = self.handles();
@@ -907,7 +916,10 @@ impl Core {
                 state.attempts.is_empty(),
             )
         };
-        if disk_full && idle && self.journal.restore_reserve().is_ok() && self.journal.reserve_present()
+        if disk_full
+            && idle
+            && self.journal.restore_reserve().is_ok()
+            && self.journal.reserve_present()
         {
             self.state().disk_full = false;
             self.heartbeat_wake.notify_one();
@@ -926,9 +938,7 @@ impl Core {
             }
             let _ = self.journal.prune(now, self.tuning.command_retention);
         }
-        if cache_due
-            && let Err(error) = self.cache.gc(self.tuning.cache_retention)
-        {
+        if cache_due && let Err(error) = self.cache.gc(self.tuning.cache_retention) {
             tracing::warn!(%error, "object cache collection failed");
         }
     }
@@ -955,14 +965,10 @@ impl Core {
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        *self
-            .stopping
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = true;
+        *self.stopping.lock().unwrap_or_else(PoisonError::into_inner) = true;
         self.stopping_changed.notify_all();
-        let threads: Vec<JoinHandle<()>> = std::mem::take(
-            &mut *self.threads.lock().unwrap_or_else(PoisonError::into_inner),
-        );
+        let threads: Vec<JoinHandle<()>> =
+            std::mem::take(&mut *self.threads.lock().unwrap_or_else(PoisonError::into_inner));
         for thread in threads {
             let _ = thread.join();
         }
@@ -1144,7 +1150,10 @@ impl Core {
 
     /// Handle one message from the controller and return the replies.
     /// `Err` asks for the connection to be closed.
-    pub(crate) fn on_message(self: &Arc<Self>, message: ControllerMsg) -> Result<Vec<WorkerMsg>, String> {
+    pub(crate) fn on_message(
+        self: &Arc<Self>,
+        message: ControllerMsg,
+    ) -> Result<Vec<WorkerMsg>, String> {
         match message {
             ControllerMsg::Welcome { .. } => Ok(Vec::new()),
             ControllerMsg::Ping { nonce } => Ok(vec![WorkerMsg::Pong { nonce }]),
@@ -1178,6 +1187,9 @@ impl Core {
             command_id: id.clone(),
             result,
         };
+
+        // Time may have jumped since the last protection pass.
+        self.enforce_authority(self.clock.now());
 
         // A command from an older controller epoch is never applied.
         if let Err(error) = self.journal.observe_epoch(envelope.controller_epoch) {
@@ -1253,7 +1265,9 @@ impl Core {
         }
 
         let outcome = match envelope.command {
-            ControllerCommand::Start { attempt, authority } => self.on_start(&id, &attempt, authority),
+            ControllerCommand::Start { attempt, authority } => {
+                self.on_start(&id, &attempt, authority)
+            }
             ControllerCommand::Revoke { attempt, reason } => self.on_revoke(&id, &attempt, &reason),
             ControllerCommand::RenewAuthority { attempt, authority } => {
                 self.on_renew(&id, &attempt, authority)
@@ -1349,7 +1363,8 @@ impl Core {
     }
 
     fn decide_offer(&self, command: &CommandId, offer: &Offer) -> OfferDecision {
-        let reject = |code: QueueReasonCode, message: String| OfferDecision::Rejected { code, message };
+        let reject =
+            |code: QueueReasonCode, message: String| OfferDecision::Rejected { code, message };
         let now = self.clock.now();
         let revision = self.state().policy.revision;
         if offer.policy_revision != revision {
@@ -1632,9 +1647,9 @@ impl Core {
                 // Released here, not wanted there: its events get this
                 // connection to be delivered, then it is forgotten.
                 (ReconcileAction::Abort, LocalAttemptState::Released) => {
-                    let old = record.released_at.is_some_and(|at| {
-                        now.since(at) >= self.tuning.released_retention
-                    });
+                    let old = record
+                        .released_at
+                        .is_some_and(|at| now.since(at) >= self.tuning.released_retention);
                     if old && self.journal.forget_attempt(id).is_ok() {
                         self.logs.remove(id);
                     }
@@ -1693,7 +1708,9 @@ pub(crate) fn scope_limits(reservation: &ResourceVector, policy: &MachinePolicy)
     }
 }
 
-pub(crate) fn describe_incompatibilities(problems: &[bella_materialize::Incompatibility]) -> String {
+pub(crate) fn describe_incompatibilities(
+    problems: &[bella_materialize::Incompatibility],
+) -> String {
     match problems {
         [] => "the snapshot cannot be materialized on this machine".to_string(),
         [only] => format!("the snapshot cannot be materialized on this machine: {only}"),
@@ -1708,12 +1725,12 @@ pub(crate) fn describe_incompatibilities(problems: &[bella_materialize::Incompat
 fn stored_offer_decision(stored: &CommandResult) -> OfferDecision {
     match stored {
         CommandResult::Applied | CommandResult::Duplicate => OfferDecision::Accepted,
-        CommandResult::Rejected { message, .. } => serde_json::from_str(message).unwrap_or_else(|_| {
-            OfferDecision::Rejected {
+        CommandResult::Rejected { message, .. } => {
+            serde_json::from_str(message).unwrap_or_else(|_| OfferDecision::Rejected {
                 code: QueueReasonCode::OfferRejected,
                 message: message.clone(),
-            }
-        }),
+            })
+        }
     }
 }
 

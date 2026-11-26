@@ -35,9 +35,11 @@ const INHERITED_PREFIX: &str = "ProgramFiles";
 /// under the canonical spelling so a recipe's `PATH` replaces the system's
 /// `Path`. Variables that are not valid Unicode are left out.
 pub(crate) fn system_env() -> BTreeMap<String, String> {
-    system_env_from(std::env::vars_os().filter_map(|(name, value)| {
-        Some((name.into_string().ok()?, value.into_string().ok()?))
-    }))
+    system_env_from(
+        std::env::vars_os().filter_map(|(name, value)| {
+            Some((name.into_string().ok()?, value.into_string().ok()?))
+        }),
+    )
 }
 
 fn system_env_from(vars: impl Iterator<Item = (String, String)>) -> BTreeMap<String, String> {
@@ -122,8 +124,16 @@ pub(crate) fn step_env(
         .unwrap_or_else(|| cpu_milli.div_ceil(1000))
         .max(1);
     set(&mut env, "BELLA_JOB_ID", offer.job_id.as_str());
-    set(&mut env, "BELLA_ATTEMPT_ID", offer.attempt.attempt_id.as_str());
-    set(&mut env, "BELLA_SNAPSHOT_ID", offer.snapshot_id.digest().as_str());
+    set(
+        &mut env,
+        "BELLA_ATTEMPT_ID",
+        offer.attempt.attempt_id.as_str(),
+    );
+    set(
+        &mut env,
+        "BELLA_SNAPSHOT_ID",
+        offer.snapshot_id.digest().as_str(),
+    );
     set(&mut env, "BELLA_WORKSPACE", &src.to_string_lossy());
     set(&mut env, "BELLA_JOBS", &jobs.to_string());
     set(&mut env, "BELLA_CPU_MILLI", &cpu_milli.to_string());
@@ -145,9 +155,14 @@ pub(crate) fn step_env(
 /// The default shell that runs a `Shell` command without one of its own.
 pub(crate) fn default_shell() -> Vec<String> {
     if cfg!(windows) {
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command"]
-            .map(str::to_string)
-            .to_vec()
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+        ]
+        .map(str::to_string)
+        .to_vec()
     } else {
         ["/bin/sh", "-c"].map(str::to_string).to_vec()
     }
@@ -241,7 +256,10 @@ mod tests {
         let src = Path::new("ws").join("src");
         assert_eq!(step_cwd(&src, None).unwrap(), src);
         assert_eq!(step_cwd(&src, Some(".")).unwrap(), src);
-        assert_eq!(step_cwd(&src, Some("a/b/")).unwrap(), src.join("a").join("b"));
+        assert_eq!(
+            step_cwd(&src, Some("a/b/")).unwrap(),
+            src.join("a").join("b")
+        );
         assert!(step_cwd(&src, Some("../x")).is_err());
         assert!(step_cwd(&src, Some("/abs")).is_err());
         assert!(step_cwd(&src, Some("a\\b")).is_err());

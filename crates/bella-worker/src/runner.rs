@@ -5,17 +5,16 @@
 //! Every state change is journaled, together with the event that reports
 //! it, before the runner acts on it.
 
+use crate::SYSTEM_STEP;
 use crate::collect;
 use crate::core::{AttemptHandle, Core, StopReason, describe_incompatibilities, scope_limits};
 use crate::env;
 use crate::readiness;
 use crate::spool::{AttemptLogs, LogWatch, Pump};
-use crate::SYSTEM_STEP;
 use bella_contain::{Child, ExitInfo, LimitHits, Membership, ProcessSpec};
+use bella_core::AttemptId;
 use bella_core::ids::Digest;
-use bella_core::job::{
-    CleanupState, CommandSpec, Outcome, ReadinessProbe, StepKind, StepSpec,
-};
+use bella_core::job::{CleanupState, CommandSpec, Outcome, ReadinessProbe, StepKind, StepSpec};
 use bella_core::machine::MachinePolicy;
 use bella_core::protocol::{
     ArtifactKind, AttemptEvent, AttemptRef, Endpoint, LocalAttemptState, LogStream, Offer,
@@ -23,13 +22,12 @@ use bella_core::protocol::{
 };
 use bella_core::snapshot::Manifest;
 use bella_core::store::StoreError;
-use bella_core::AttemptId;
 use bella_journal::{AttemptRecord, JournalError, JournalTx};
 use bella_materialize::MaterializeError;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -70,12 +68,7 @@ pub(crate) fn launch(core: &Arc<Core>, handle: Arc<AttemptHandle>) {
 ///
 /// `proven` is how the absence of processes is known when no scope of the
 /// current boot is on record (a reboot, or no scope was ever created).
-pub(crate) fn recover(
-    core: &Arc<Core>,
-    record: AttemptRecord,
-    detail: &str,
-    proven: Option<&str>,
-) {
+pub(crate) fn recover(core: &Arc<Core>, record: AttemptRecord, detail: &str, proven: Option<&str>) {
     let attempt = record.attempt.clone();
     let handle = AttemptHandle::new(record.offer.clone(), record.state);
     handle.busy.store(true, Ordering::SeqCst);
@@ -545,7 +538,10 @@ impl<'a> Run<'a> {
         }
         let workspace = self.workspace.to_string_lossy().into_owned();
         let id = self.id().clone();
-        if self.journal(|tx| tx.set_workspace(&id, &workspace)).is_err() {
+        if self
+            .journal(|tx| tx.set_workspace(&id, &workspace))
+            .is_err()
+        {
             return Err(stop_outcome(self.handle));
         }
         if let Err(error) = std::fs::create_dir_all(&self.tmp) {
@@ -556,7 +552,11 @@ impl<'a> Run<'a> {
 
         // Scope: journaled before the first spawn.
         let limits = scope_limits(&self.offer.reservation, &self.policy);
-        let scope = match self.core.containment.create(&scope_name(self.id()), &limits) {
+        let scope = match self
+            .core
+            .containment
+            .create(&scope_name(self.id()), &limits)
+        {
             Ok(scope) => scope,
             Err(error) => {
                 return Err(Outcome::InfraInterrupted {
@@ -601,7 +601,9 @@ impl<'a> Run<'a> {
                 return Err(format!("step name `{}` is used twice", step.name));
             }
             for dependency in &step.depends_on {
-                let earlier = steps[..index].iter().find(|other| &other.name == dependency);
+                let earlier = steps[..index]
+                    .iter()
+                    .find(|other| &other.name == dependency);
                 match earlier {
                     Some(other) if other.kind == StepKind::Cleanup => {
                         return Err(format!(
@@ -660,8 +662,7 @@ impl<'a> Run<'a> {
         needed.push(digest.clone());
         self.core.cache.pin(self.id(), needed);
 
-        let case_sensitive =
-            bella_materialize::is_case_sensitive(&self.workspace).unwrap_or(true);
+        let case_sensitive = bella_materialize::is_case_sensitive(&self.workspace).unwrap_or(true);
         if let Err(problems) =
             bella_materialize::check_platform(&manifest, self.core.os(), case_sensitive)
         {
@@ -681,7 +682,10 @@ impl<'a> Run<'a> {
             && cache.discard_if_corrupt(damaged)
         {
             // The local copy was damaged; fetch it again once.
-            self.note(SYSTEM_STEP, "a cached source object was damaged and is fetched again");
+            self.note(
+                SYSTEM_STEP,
+                "a cached source object was damaged and is fetched again",
+            );
             result = bella_materialize::materialize(&manifest, cache.as_ref(), &self.src, &options);
         }
         match result {
@@ -894,7 +898,9 @@ impl<'a> Run<'a> {
         let timeout = self.offer.spec.timeout_secs;
         self.note(
             running.unwrap_or(SYSTEM_STEP),
-            &format!("the job exceeded its timeout of {timeout} s; stopping every process of the attempt"),
+            &format!(
+                "the job exceeded its timeout of {timeout} s; stopping every process of the attempt"
+            ),
         );
         self.fail(Outcome::TimedOut { step: None });
         // Later steps are not started: the job as a whole is over.
@@ -904,12 +910,7 @@ impl<'a> Run<'a> {
 
     /// Wait for a foreground process. `budget` is the end of the cleanup
     /// phase when this is a cleanup step, which ignores stop requests.
-    fn wait(
-        &mut self,
-        child: &mut dyn Child,
-        step: &StepSpec,
-        budget: Option<Instant>,
-    ) -> End {
+    fn wait(&mut self, child: &mut dyn Child, step: &StepSpec, budget: Option<Instant>) -> End {
         let started = Instant::now();
         let poll = self.core.tuning.poll_interval;
         loop {
@@ -1008,7 +1009,10 @@ impl<'a> Run<'a> {
                 let _ = self.set_step(name, StepState::Stopped, None);
             }
             End::WaitFailed(error) => {
-                self.note(name, &format!("the step's process could not be waited for: {error}"));
+                self.note(
+                    name,
+                    &format!("the step's process could not be waited for: {error}"),
+                );
                 self.stop_scope(self.grace());
                 let _ = self.set_step(name, StepState::Failed, None);
                 if budget.is_none() {
@@ -1209,7 +1213,10 @@ impl<'a> Run<'a> {
             for error in errors {
                 self.note(
                     SYSTEM_STEP,
-                    &format!("output pattern `{}` was ignored: it {}", error.pattern, error.reason),
+                    &format!(
+                        "output pattern `{}` was ignored: it {}",
+                        error.pattern, error.reason
+                    ),
                 );
             }
             if found.len() >= MAX_COLLECTED_FILES {

@@ -26,12 +26,10 @@ async fn blocking<T: Send + 'static>(
 }
 
 pub(crate) async fn run(
-    mut config: WorkerConfig,
+    config: WorkerConfig,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), WorkerError> {
     let connector = config.connector.clone();
-    // The copy inside `config` is not used again.
-    config.connector = connector.clone();
     let core = blocking(move || Core::start(config)).await??;
     core.spawn_protection_loop()?;
 
@@ -64,7 +62,11 @@ impl Jitter {
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
         let millis = limit.as_millis().min(u128::from(u64::MAX)) as u64;
-        Duration::from_millis(if millis == 0 { 0 } else { self.0 % (millis + 1) })
+        Duration::from_millis(if millis == 0 {
+            0
+        } else {
+            self.0 % (millis + 1)
+        })
     }
 }
 
@@ -137,9 +139,11 @@ async fn serve(core: &Arc<Core>, connection: Connection) -> Result<String, Strin
             ..
         }) => {
             let greeted = core.clone();
-            blocking(move || greeted.welcome(protocol_version, controller_epoch, &fleet_id, &policy))
-                .await
-                .map_err(|error| error.to_string())??;
+            blocking(move || {
+                greeted.welcome(protocol_version, controller_epoch, &fleet_id, &policy)
+            })
+            .await
+            .map_err(|error| error.to_string())??;
             core.tuning.heartbeat_interval.unwrap_or_else(|| {
                 if heartbeat_interval_ms == 0 {
                     defaults::HEARTBEAT_INTERVAL
@@ -268,10 +272,20 @@ mod tests {
         let mut jitter = Jitter::new();
         let min = Duration::from_millis(100);
         let max = Duration::from_millis(1000);
-        for (failures, base) in [(0u32, 100u64), (1, 200), (2, 400), (3, 800), (4, 1000), (40, 1000)] {
+        for (failures, base) in [
+            (0u32, 100u64),
+            (1, 200),
+            (2, 400),
+            (3, 800),
+            (4, 1000),
+            (40, 1000),
+        ] {
             for _ in 0..50 {
                 let delay = backoff(min, max, failures, &mut jitter).as_millis() as u64;
-                assert!(delay >= base && delay <= base + base / 2, "{failures}: {delay}");
+                assert!(
+                    delay >= base && delay <= base + base / 2,
+                    "{failures}: {delay}"
+                );
             }
         }
     }

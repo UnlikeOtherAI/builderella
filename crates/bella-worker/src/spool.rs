@@ -149,8 +149,7 @@ impl AttemptLogs {
             ) else {
                 continue;
             };
-            let (Some(stream), Ok(start)) = (stream_from_name(stream), start.parse::<u64>())
-            else {
+            let (Some(stream), Ok(start)) = (stream_from_name(stream), start.parse::<u64>()) else {
                 continue;
             };
             let len = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
@@ -167,10 +166,7 @@ impl AttemptLogs {
             stream.segments.push_back(Segment { start, len, path });
             stream.produced = start + len;
         }
-        for cursor in journal
-            .log_cursors(&attempt.attempt_id)
-            .unwrap_or_default()
-        {
+        for cursor in journal.log_cursors(&attempt.attempt_id).unwrap_or_default() {
             let stream = streams.entry((cursor.step, cursor.stream)).or_default();
             stream.acked = cursor.offsets.acked.min(stream.produced);
             stream.journal_produced = cursor.offsets.produced;
@@ -571,7 +567,12 @@ impl LogHub {
     /// The next log chunks for the connection, at most `limit`, keeping the
     /// bytes sent and not yet acknowledged at or below `window`. Attempts
     /// take turns, and within an attempt its streams do.
-    pub(crate) fn next_chunks(&self, journal: &Journal, window: u64, limit: usize) -> Vec<LogChunk> {
+    pub(crate) fn next_chunks(
+        &self,
+        journal: &Journal,
+        window: u64,
+        limit: usize,
+    ) -> Vec<LogChunk> {
         let attempts: Vec<Arc<AttemptLogs>> = self.attempts().values().cloned().collect();
         if attempts.is_empty() {
             return Vec::new();
@@ -724,7 +725,6 @@ impl Pump {
         }
         true
     }
-
 }
 
 #[cfg(test)]
@@ -768,7 +768,13 @@ mod tests {
         assert_eq!(joined, b"0123456789abcdefghij-tail");
         assert!(hub.next_chunks(&journal, 1 << 20, 16).is_empty());
 
-        hub.ack(&journal, &logs.attempt.attempt_id, "build", LogStream::Stdout, 20);
+        hub.ack(
+            &journal,
+            &logs.attempt.attempt_id,
+            "build",
+            LogStream::Stdout,
+            20,
+        );
         assert_eq!(fs::read_dir(&attempt_dir).unwrap().count(), 1);
         let offsets = journal
             .log_offsets(&logs.attempt.attempt_id, "build", LogStream::Stdout)
@@ -791,7 +797,13 @@ mod tests {
         let sent: usize = first.iter().map(|c| decode(&c.data_b64).len()).sum();
         assert_eq!(sent, 40);
         assert!(hub.next_chunks(&journal, 40, 16).is_empty());
-        hub.ack(&journal, &logs.attempt.attempt_id, "build", LogStream::Stdout, 40);
+        hub.ack(
+            &journal,
+            &logs.attempt.attempt_id,
+            "build",
+            LogStream::Stdout,
+            40,
+        );
         let second = hub.next_chunks(&journal, 40, 16);
         assert_eq!(second[0].offset, 40);
     }
@@ -836,7 +848,13 @@ mod tests {
         let (dir, journal, hub, logs) = fixture(1 << 20, 8);
         logs.append("build", LogStream::Stdout, b"0123456789abcdef-rest");
         hub.next_chunks(&journal, 1 << 20, 16);
-        hub.ack(&journal, &logs.attempt.attempt_id, "build", LogStream::Stdout, 16);
+        hub.ack(
+            &journal,
+            &logs.attempt.attempt_id,
+            "build",
+            LogStream::Stdout,
+            16,
+        );
         let attempt = logs.attempt.clone();
         drop(logs);
 

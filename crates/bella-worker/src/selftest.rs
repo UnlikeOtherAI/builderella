@@ -2,10 +2,10 @@
 
 use crate::env;
 use bella_contain::{Containment, Limits, Membership, ProcessSpec};
+use bella_core::BootId;
 use bella_core::machine::{Hardware, OsInfo, Telemetry};
 use bella_core::platform::Capability;
 use bella_core::resources::EnforcementReport;
-use bella_core::BootId;
 use bella_probe::{ManagedUsage, Sampler};
 use std::io::Read;
 use std::path::Path;
@@ -128,7 +128,12 @@ fn run_in_scope(scratch: &Path, containment: &dyn Containment) -> Result<String,
         environment.insert((*name).to_string(), tmp.clone());
     }
     let argv: Vec<String> = if cfg!(windows) {
-        vec!["cmd.exe".into(), "/d".into(), "/c".into(), format!("echo {MARKER}")]
+        vec![
+            "cmd.exe".into(),
+            "/d".into(),
+            "/c".into(),
+            format!("echo {MARKER}"),
+        ]
     } else {
         vec!["/bin/sh".into(), "-c".into(), format!("echo {MARKER}")]
     };
@@ -162,11 +167,16 @@ fn run_in_scope(scratch: &Path, containment: &dyn Containment) -> Result<String,
                         break Err("the command did not finish in time".to_string());
                     }
                     Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-                    Err(error) => break Err(format!("the command could not be waited for: {error}")),
+                    Err(error) => {
+                        break Err(format!("the command could not be waited for: {error}"));
+                    }
                 }
             };
-            let stopped =
-                bella_contain::stop_scope(scope.as_mut(), Duration::from_secs(2), Duration::from_secs(10));
+            let stopped = bella_contain::stop_scope(
+                scope.as_mut(),
+                Duration::from_secs(2),
+                Duration::from_secs(10),
+            );
             let text = reader.join().unwrap_or_default();
             let _ = drain.join();
             exit.and_then(|exit| {

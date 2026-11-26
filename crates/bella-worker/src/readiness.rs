@@ -89,7 +89,10 @@ mod tests {
     #[test]
     fn status_lines_are_parsed_strictly() {
         assert_eq!(parse_status_line(b"HTTP/1.1 200 OK\r\n"), Some(200));
-        assert_eq!(parse_status_line(b"HTTP/1.0 503 Busy\r\nx: y\r\n"), Some(503));
+        assert_eq!(
+            parse_status_line(b"HTTP/1.0 503 Busy\r\nx: y\r\n"),
+            Some(503)
+        );
         assert_eq!(parse_status_line(b"HTTP/1.1 204\r\n"), Some(204));
         assert_eq!(parse_status_line(b"SSH-2.0-OpenSSH\r\n"), None);
         assert_eq!(parse_status_line(b"HTTP/1.1 20 OK\r\n"), None);
