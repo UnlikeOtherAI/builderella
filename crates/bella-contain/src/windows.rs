@@ -546,20 +546,35 @@ fn open_member(job: HANDLE, pid: u32) -> Option<OwnedHandle> {
     (ok != 0 && in_job != 0).then_some(handle)
 }
 
+/// Processes in `job` that have not exited. The job's own process count can
+/// still include a process that was terminated a moment ago.
+fn live_processes(job: HANDLE) -> Result<usize, ContainError> {
+    Ok(process_ids(job)?
+        .into_iter()
+        .filter_map(|pid| open_member(job, pid))
+        // SAFETY: the member handle is open with PROCESS_SYNCHRONIZE.
+        .filter(|member| unsafe { WaitForSingleObject(raw(member), 0) } != WAIT_OBJECT_0)
+        .count())
+}
+
 /// Ends the keeper processes in `keeper_job` one by one.
 ///
 /// The job itself is not terminated: on some Windows versions a job that
 /// went through `TerminateJobObject` refuses every later
 /// `AssignProcessToJobObject` with "access denied", and a scope whose keeper
 /// is ended this way may need a new keeper in the same job later (another
-/// handle to the scope spawns again). Best effort: a keeper that cannot be
-/// ended keeps the job name alive, which only delays its release.
+/// handle to the scope spawns again). Each keeper is waited for, briefly, so
+/// that the job's process count no longer includes it when this returns and
+/// a later spawn starts a new keeper instead of relying on a dying one. Best
+/// effort: a keeper that cannot be ended keeps the job name alive, which
+/// only delays its release.
 fn end_keepers(keeper_job: HANDLE) {
+    const EXIT_WAIT_MS: u32 = 5_000;
     let Ok(pids) = process_ids(keeper_job) else {
         return;
     };
     for pid in pids {
-        let access = PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION;
+        let access = PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE;
         // SAFETY: no pointers are involved; failure is reported as null.
         let handle = unsafe { OpenProcess(access, 0, pid) };
         if handle.is_null() {
@@ -572,8 +587,12 @@ fn end_keepers(keeper_job: HANDLE) {
         // The check keeps a reused process id from being ended.
         let ok = unsafe { IsProcessInJob(raw(&process), keeper_job, &mut in_job) };
         if ok != 0 && in_job != 0 {
-            // SAFETY: the process handle is open with PROCESS_TERMINATE.
-            unsafe { TerminateProcess(raw(&process), 0) };
+            // SAFETY: the process handle is open with PROCESS_TERMINATE and
+            // PROCESS_SYNCHRONIZE.
+            unsafe {
+                TerminateProcess(raw(&process), 0);
+                WaitForSingleObject(raw(&process), EXIT_WAIT_MS);
+            }
         }
     }
 }
@@ -1393,7 +1412,7 @@ impl JobScope {
     /// Starts a keeper if there is none, for instance because another handle
     /// to this scope was dropped while the scope was empty.
     fn ensure_keeper(&self) -> Result<(), ContainError> {
-        if accounting(raw(&self.keeper_job))?.ActiveProcesses == 0 {
+        if live_processes(raw(&self.keeper_job))? == 0 {
             start_keeper(self.handle(), raw(&self.keeper_job))?;
         }
         Ok(())
