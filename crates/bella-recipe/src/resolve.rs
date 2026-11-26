@@ -612,41 +612,59 @@ fn checked_placement(choice: &PlacementChoice) -> Result<PlacementChoice, String
     Ok(choice)
 }
 
+/// One of the three measured dimensions of an envelope.
+struct Dimension<'a> {
+    /// Recipe key that declares the reservation.
+    key: &'static str,
+    /// Recipe key that declares the growth room.
+    max_key: &'static str,
+    peak: u64,
+    maximum: &'a mut u64,
+    limit: u64,
+    show: fn(u64) -> String,
+}
+
 /// Refuse a reservation above the limit; lower growth room that exceeds it.
 fn limit_envelope(
     envelope: &mut ResourceEnvelope,
     limit: &ResourceVector,
     report: &mut Report<'_>,
 ) {
-    let memory = |bytes: u64| format!("{} of memory", format_bytes(bytes));
-    let disk = |bytes: u64| format!("{} of disk", format_bytes(bytes));
-    let dimensions: [(&str, &str, u64, &mut u64, u64, &dyn Fn(u64) -> String); 3] = [
-        (
-            "cpu",
-            "max_cpu",
-            envelope.peak.cpu_milli,
-            &mut envelope.maximum.cpu_milli,
-            limit.cpu_milli,
-            &format_cpus,
-        ),
-        (
-            "memory",
-            "max_memory",
-            envelope.peak.memory_bytes,
-            &mut envelope.maximum.memory_bytes,
-            limit.memory_bytes,
-            &memory,
-        ),
-        (
-            "disk",
-            "max_disk",
-            envelope.peak.disk_bytes,
-            &mut envelope.maximum.disk_bytes,
-            limit.disk_bytes,
-            &disk,
-        ),
+    let dimensions = [
+        Dimension {
+            key: "cpu",
+            max_key: "max_cpu",
+            peak: envelope.peak.cpu_milli,
+            maximum: &mut envelope.maximum.cpu_milli,
+            limit: limit.cpu_milli,
+            show: format_cpus,
+        },
+        Dimension {
+            key: "memory",
+            max_key: "max_memory",
+            peak: envelope.peak.memory_bytes,
+            maximum: &mut envelope.maximum.memory_bytes,
+            limit: limit.memory_bytes,
+            show: |bytes| format!("{} of memory", format_bytes(bytes)),
+        },
+        Dimension {
+            key: "disk",
+            max_key: "max_disk",
+            peak: envelope.peak.disk_bytes,
+            maximum: &mut envelope.maximum.disk_bytes,
+            limit: limit.disk_bytes,
+            show: |bytes| format!("{} of disk", format_bytes(bytes)),
+        },
     ];
-    for (key, max_key, peak, maximum, limit, show) in dimensions {
+    for dimension in dimensions {
+        let Dimension {
+            key,
+            max_key,
+            peak,
+            maximum,
+            limit,
+            show,
+        } = dimension;
         if peak > limit {
             report.error(
                 key,
