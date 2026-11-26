@@ -1013,7 +1013,7 @@ fn explain_answers_for_offered_waiting_and_unknown_jobs() {
         vec![fits.clone(), too_big_now.clone()],
     );
 
-    let ready = explain(&state, &fits).expect("the job is queued");
+    let ready = explain(&state, &fits.id).expect("the job is queued");
     assert_eq!(ready.code, Code::Schedulable);
     assert!(
         ready.message.contains("about to be offered to box"),
@@ -1022,7 +1022,7 @@ fn explain_answers_for_offered_waiting_and_unknown_jobs() {
     );
 
     // The second job would fit an idle machine, but not after the first.
-    let waiting = explain(&state, &too_big_now).expect("the job is queued");
+    let waiting = explain(&state, &too_big_now.id).expect("the job is queued");
     assert_eq!(waiting.code, Code::WaitingForCapacity);
     assert_eq!(
         Some(&waiting),
