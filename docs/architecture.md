@@ -521,6 +521,39 @@ The `bella` binary. `bella controller …`, `bella worker …`, `bella login`,
 `mcp`. Output is plain text by default and JSON with `--json`. A failed job
 makes `submit --wait` exit non-zero; a wait timeout never cancels.
 
+### 6.19 bella-service
+
+Installs, removes, inspects and runs the controller and worker as operating
+system services; `bella controller service …` and `bella worker service …`
+call it. `render(spec, os)` is pure and covers every platform on every host;
+`install`, `uninstall`, `status`, `start` and `stop` act on the host's
+manager. `ShutdownSignal` is the stop request, and on Windows
+`run_as_service(name, body)` speaks to the Service Control Manager.
+
+| Host | Definition | Account |
+| --- | --- | --- |
+| Linux | systemd system unit; a user unit as the second option (boot start needs lingering) | a system worker names its user; the controller defaults to root |
+| macOS | LaunchAgent in the graphical session; the controller may be a LaunchDaemon | the logged-in user for the worker, which is never a daemon |
+| Windows | real service, automatic start | `LocalSystem` for the controller; the worker's account is named by the caller |
+
+* Services restart after a crash or a non-zero exit and stay down after a
+  clean exit or a requested stop.
+* A stop gets the cleanup timeout plus the terminate grace plus 30 s.
+* Linux workers get `Delegate=yes` (§6.8), `OOMPolicy=continue` and
+  `KillMode=mixed`. The Windows worker stays in session 0, where its job
+  objects are found again after a restart.
+* Windows services have no standard output and no working directory
+  setting: the definition passes both directories in the environment,
+  `run_as_service` changes to the working one, and the program writes its own
+  log files. macOS logs to files in the log directory, Linux to the journal.
+* The worker's account must own its data directory, work root and
+  toolchains. On Windows an ordinary account also needs its password and the
+  "Log on as a service" right.
+* Installing the same specification twice changes nothing; a different one
+  needs an explicit replacement. Only definitions this crate wrote are
+  replaced or removed.
+* Environment keys that look like secrets are refused.
+
 ## 7. Timing defaults
 
 See `bella_core::defaults`. Protection loop 1 s, heartbeat 5 s, stale 15 s,
