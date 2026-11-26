@@ -112,8 +112,10 @@ fn a05_a_real_process_over_a_hard_memory_limit_is_resource_exhausted() {
     let containment = bella_contain::native().unwrap();
     if containment.enforcement().memory != Enforcement::Hard {
         assert_eq!(containment.mechanism(), "process-group");
+        eprintln!("not run: the process-group adapter enforces no memory limit");
         return;
     }
+    eprintln!("memory limit enforced by {}", containment.mechanism());
     let mut h = Harness::new();
     h.containment = Some(containment);
     h.start_connected();

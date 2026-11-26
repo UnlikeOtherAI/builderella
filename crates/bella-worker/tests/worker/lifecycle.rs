@@ -23,7 +23,14 @@ fn happy_path_streams_logs_publishes_artifacts_and_releases_with_proof() {
     let mut h = Harness::new();
     h.start_connected();
     let mut spec = spec(vec![
-        helper("build", "lines|3|0"),
+        step(
+            "greet",
+            bella_core::job::CommandSpec::Shell {
+                script: "echo shell-ok".to_string(),
+                shell: None,
+            },
+        ),
+        helper("build", "lines|3|0").needs(&["greet"]),
         helper("make", "write|result.bin|1000|0").needs(&["build"]),
         helper("report", "write|report.xml|10|0")
             .kind(StepKind::Test)
@@ -76,7 +83,12 @@ fn happy_path_streams_logs_publishes_artifacts_and_releases_with_proof() {
         assert!(h.remote.contains(digest).unwrap(), "{path} is in the store");
     }
 
-    for step in ["build", "make", "report"] {
+    assert!(
+        h.ctl
+            .log(&id, "greet", LogStream::Stdout)
+            .contains("shell-ok")
+    );
+    for step in ["greet", "build", "make", "report"] {
         assert_eq!(
             h.ctl.step_states(&id, step),
             [StepState::Running, StepState::Succeeded],
@@ -566,4 +578,141 @@ fn self_test_runs_a_managed_command_end_to_end() {
     assert!(report.hardware.logical_cpus > 0);
     // The scratch directory is gone again.
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn the_job_timeout_ends_the_attempt_as_timed_out() {
+    let mut h = Harness::new();
+    h.start_connected();
+    let mut spec = spec(vec![
+        helper("slow", "sleep|60"),
+        helper("never", "lines|1|0"),
+    ]);
+    spec.timeout_secs = 1;
+    let offer = h.launch(spec);
+    let id = offer.attempt.attempt_id.clone();
+    h.ctl.wait_released(&id);
+    assert_eq!(h.ctl.outcome(&id), Some(Outcome::TimedOut { step: None }));
+    assert_eq!(
+        h.ctl.step_states(&id, "slow"),
+        [StepState::Running, StepState::Stopped]
+    );
+    assert_eq!(h.ctl.step_states(&id, "never"), [StepState::Skipped]);
+}
+
+#[test]
+fn services_become_ready_by_log_line_or_command_and_time_out_otherwise() {
+    let mut h = Harness::new();
+    h.start_connected();
+    let (first, second) = (free_port(), free_port());
+    let offer = h.launch(spec(vec![
+        helper("by-log", &format!("listen|{first}"))
+            .kind(StepKind::Service)
+            .ready(
+                ReadinessProbe::LogLine {
+                    contains: "service ready".to_string(),
+                },
+                30,
+            ),
+        helper("by-command", &format!("listen|{second}"))
+            .kind(StepKind::Service)
+            .ready(
+                ReadinessProbe::Command {
+                    command: helper_command(&format!("connect|{second}")),
+                },
+                30,
+            ),
+        helper("check", &format!("connect|{first}")).needs(&["by-log", "by-command"]),
+    ]));
+    let id = offer.attempt.attempt_id.clone();
+    h.ctl.wait_released(&id);
+    assert_eq!(
+        h.ctl.outcome(&id),
+        Some(Outcome::Succeeded),
+        "{}",
+        h.ctl.dump()
+    );
+    for service in ["by-log", "by-command"] {
+        assert_eq!(
+            h.ctl.step_states(&id, service),
+            [StepState::Running, StepState::Ready, StepState::Stopped],
+            "{service}"
+        );
+    }
+
+    // A service whose probe never passes times out, and its dependants skip.
+    let port = free_port();
+    let offer = h.launch(spec(vec![
+        helper("mute", "sleep|60")
+            .kind(StepKind::Service)
+            .ready(ReadinessProbe::Tcp { port }, 1),
+        helper("uses", "lines|1|0").needs(&["mute"]),
+    ]));
+    let id = offer.attempt.attempt_id.clone();
+    h.ctl.wait_released(&id);
+    assert_eq!(
+        h.ctl.outcome(&id),
+        Some(Outcome::TimedOut {
+            step: Some("mute".to_string())
+        })
+    );
+    assert_eq!(
+        h.ctl.step_states(&id, "mute"),
+        [StepState::Running, StepState::TimedOut]
+    );
+    assert_eq!(h.ctl.step_states(&id, "uses"), [StepState::Skipped]);
+}
+
+#[test]
+fn a59_an_upload_failure_is_reported_and_leaves_the_outcome_alone() {
+    let mut h = Harness::new();
+    h.start_connected();
+    h.refuse_uploads
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut spec = spec(vec![helper("make", "write|result.bin|1000|0")]);
+    spec.outputs.artifacts = vec!["result.bin".to_string()];
+    let offer = h.launch(spec);
+    let id = offer.attempt.attempt_id.clone();
+    h.ctl.wait_released(&id);
+    assert_eq!(h.ctl.outcome(&id), Some(Outcome::Succeeded));
+    assert!(
+        !h.ctl
+            .events_of(&id)
+            .iter()
+            .any(|event| matches!(event, AttemptEvent::ArtifactPublished { .. })),
+        "nothing is announced that is not in the store"
+    );
+    let system = h.ctl.log(&id, bella_worker::SYSTEM_STEP, LogStream::System);
+    assert!(
+        system.contains("`result.bin` could not be uploaded"),
+        "{system}"
+    );
+}
+
+#[test]
+fn artifacts_beyond_the_allowance_are_not_collected() {
+    let mut h = Harness::new();
+    h.start_connected();
+    let mut spec = spec(vec![
+        helper("small", "write|a-small.bin|300|0"),
+        helper("large", "write|b-large.bin|1000|0"),
+    ]);
+    spec.outputs.artifacts = vec!["*.bin".to_string()];
+    spec.outputs.max_artifact_bytes = 500;
+    let offer = h.launch(spec);
+    let id = offer.attempt.attempt_id.clone();
+    h.ctl.wait_released(&id);
+    assert_eq!(h.ctl.outcome(&id), Some(Outcome::Succeeded));
+    let published: Vec<String> = h
+        .ctl
+        .events_of(&id)
+        .iter()
+        .filter_map(|event| match event {
+            AttemptEvent::ArtifactPublished { path, .. } => Some(path.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(published, ["a-small.bin"]);
+    let system = h.ctl.log(&id, bella_worker::SYSTEM_STEP, LogStream::System);
+    assert!(system.contains("allowance of 500 bytes"), "{system}");
 }

@@ -56,7 +56,10 @@ pub const CONTROLLER_URL: &str = "https://controller.invalid:7420";
 
 /// Run the helper mode named by `BELLA_TEST_HELPER`, if any, and exit.
 pub fn helper_entry() {
-    let Ok(mode) = std::env::var(HELPER_ENV) else {
+    // A mode on the command line (see `helper_command`) wins over the
+    // environment, which a readiness probe shares with its service.
+    let from_args = std::env::args().find_map(|arg| arg.strip_prefix(MODE_ARG).map(str::to_string));
+    let Some(mode) = from_args.or_else(|| std::env::var(HELPER_ENV).ok()) else {
         return;
     };
     // End the line the test harness started ("test helper_entry ... "),
@@ -297,8 +300,13 @@ pub fn helper(name: &str, mode: &str) -> StepSpec {
     step
 }
 
-/// The helper as a readiness command.
-pub fn helper_command() -> CommandSpec {
+/// Prefix of the command-line argument that names a helper mode. The test
+/// harness takes it as one more name filter, which matches no test.
+const MODE_ARG: &str = "bella-helper-mode=";
+
+/// The helper in `mode` as a plain command, independent of the step's
+/// environment.
+pub fn helper_command(mode: &str) -> CommandSpec {
     let mut argv = vec![
         std::env::current_exe()
             .unwrap()
@@ -306,6 +314,7 @@ pub fn helper_command() -> CommandSpec {
             .into_owned(),
     ];
     argv.extend(helper_args());
+    argv.insert(2, format!("{MODE_ARG}{mode}"));
     CommandSpec::Argv { argv }
 }
 
@@ -1125,6 +1134,8 @@ pub struct Harness {
     pub rt: tokio::runtime::Runtime,
     pub dir: tempfile::TempDir,
     pub remote: Arc<MemStore>,
+    /// While set, the controller's store refuses every upload.
+    pub refuse_uploads: Arc<AtomicBool>,
     pub clock: Arc<dyn Clock>,
     pub manual: Option<ManualClock>,
     pub telemetry: Arc<Mutex<Telemetry>>,
@@ -1195,6 +1206,7 @@ impl Harness {
             rt,
             dir,
             remote: Arc::new(MemStore::new()),
+            refuse_uploads: Arc::new(AtomicBool::new(false)),
             clock,
             manual,
             telemetry: Arc::new(Mutex::new(calm_telemetry())),
@@ -1249,7 +1261,10 @@ impl Harness {
         WorkerConfig {
             data_dir: self.data_dir(),
             work_root: self.work_root(),
-            remote: self.remote.clone(),
+            remote: Arc::new(GatedStore {
+                inner: self.remote.clone(),
+                refuse_puts: self.refuse_uploads.clone(),
+            }),
             connector: self.connector.clone(),
             containment: Some(containment),
             clock: self.clock.clone(),
@@ -1607,4 +1622,35 @@ pub fn kill_pid(pid: u32) {
 pub fn pid_after(text: &str, prefix: &str) -> Option<u32> {
     text.lines()
         .find_map(|line| line.trim().strip_prefix(prefix)?.trim().parse().ok())
+}
+
+/// The controller's store as the worker sees it, with uploads that can be
+/// made to fail.
+struct GatedStore {
+    inner: Arc<MemStore>,
+    refuse_puts: Arc<AtomicBool>,
+}
+
+impl bella_core::store::ObjectStore for GatedStore {
+    fn contains(&self, digest: &Digest) -> Result<bool, bella_core::store::StoreError> {
+        self.inner.contains(digest)
+    }
+    fn put(
+        &self,
+        reader: &mut dyn Read,
+        expected: Option<&Digest>,
+    ) -> Result<(Digest, u64), bella_core::store::StoreError> {
+        if self.refuse_puts.load(Ordering::SeqCst) {
+            return Err(bella_core::store::StoreError::Unavailable(
+                "the test store refuses uploads".to_string(),
+            ));
+        }
+        self.inner.put(reader, expected)
+    }
+    fn open(&self, digest: &Digest) -> Result<Box<dyn Read + Send>, bella_core::store::StoreError> {
+        self.inner.open(digest)
+    }
+    fn size(&self, digest: &Digest) -> Result<Option<u64>, bella_core::store::StoreError> {
+        self.inner.size(digest)
+    }
 }
