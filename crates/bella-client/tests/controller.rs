@@ -233,8 +233,9 @@ async fn client_and_controller_agree_on_the_wire() {
         snapshot.id
     );
 
-    // Live events only: the stream starts now and sees the submission.
-    let mut events = developer.events(None);
+    // Replay from the start. A stream without `after` would only see
+    // events after it connects, which is on its first read.
+    let mut events = developer.events(Some(0));
 
     let request = SubmitJobRequest {
         project: "wire".into(),
