@@ -32,6 +32,13 @@ macro_rules! id_type {
                 Self(format!("{}_{}", $prefix, uuid::Uuid::now_v7().simple()))
             }
 
+            /// A stable identifier derived from `seed`: the same seed always
+            /// gives the same id.
+            pub fn derive(seed: &[u8]) -> Self {
+                let hash = hex::encode(Sha256::digest(seed));
+                Self(format!("{}_{}", $prefix, &hash[..32]))
+            }
+
             pub fn parse(s: &str) -> Result<Self, IdError> {
                 let rest = s
                     .strip_prefix(concat!($prefix, "_"))
@@ -238,6 +245,9 @@ mod tests {
         let json = serde_json::to_string(&job).unwrap();
         assert_eq!(serde_json::from_str::<JobId>(&json).unwrap(), job);
         assert!(serde_json::from_str::<JobId>("\"job_nope\"").is_err());
+        assert_eq!(BootId::derive(b"x"), BootId::derive(b"x"));
+        assert_ne!(BootId::derive(b"x"), BootId::derive(b"y"));
+        assert!(BootId::parse(BootId::derive(b"x").as_str()).is_ok());
     }
 
     #[test]
