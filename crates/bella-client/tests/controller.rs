@@ -171,7 +171,9 @@ async fn client_and_controller_agree_on_the_wire() {
     let small = b"fn main() {}\n".to_vec();
     let store_client = developer.clone();
     let handle = tokio::runtime::Handle::current();
-    let (digests, sizes) = tokio::task::spawn_blocking(move || {
+    // The store blocks its caller, so it runs on a plain thread: it refuses
+    // runtime threads, `spawn_blocking` ones included.
+    let uploader = std::thread::spawn(move || {
         let store = HttpObjectStore::new(store_client, handle);
         let mut digests = Vec::new();
         let mut sizes = Vec::new();
@@ -190,9 +192,10 @@ async fn client_and_controller_agree_on_the_wire() {
             vec![absent]
         );
         (digests, sizes)
-    })
-    .await
-    .unwrap();
+    });
+    let (digests, sizes) = tokio::task::spawn_blocking(move || uploader.join().unwrap())
+        .await
+        .unwrap();
 
     // A snapshot of those objects.
     let entries = ["empty", "main.rs", "big.bin"]
