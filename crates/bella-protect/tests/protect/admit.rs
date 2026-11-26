@@ -243,3 +243,68 @@ fn an_empty_request_passes_only_while_the_host_admits() {
     host.control.paused = true;
     assert!(host.admit(&ResourceVector::ZERO).is_err());
 }
+
+#[test]
+fn negative_headroom_refuses_even_an_empty_request() {
+    // Above the 2 GiB floor, but inside the 0.5 GiB guard:
+    // A − F − G is negative, so `≥ q.memory` fails for q.memory = 0 too.
+    let mut host = Host::shared_workstation();
+    host.set_available(2 * GIB + 100 * MIB);
+    let rejection = host.admit(&ResourceVector::ZERO).expect_err("guard");
+    assert_eq!(rejection.code, QueueReasonCode::ForegroundProtection);
+    assert_eq!(
+        rejection.message,
+        "needs 0.0 GiB; nothing can be granted safely now (available 2.1, floor 2.0, guard 0.5, promised 0.0)"
+    );
+    let budget = host.budget();
+    assert!(!budget.admitting);
+    assert!(budget.flags.is_empty());
+    assert_eq!(
+        budget.reasons,
+        vec![
+            "memory: nothing can be granted safely now (available 2.1, floor 2.0, guard 0.5, promised 0.0)"
+        ]
+    );
+    assert_eq!(budget.free.memory_bytes, 0);
+
+    // Promises that exceed what is available have the same effect.
+    let mut host = Host::shared_workstation();
+    host.grants = vec![offered(1, 1000, 20 * GIB)];
+    host.set_available(21 * GIB);
+    assert!(host.admit(&ResourceVector::ZERO).is_err());
+    assert!(!host.budget().admitting);
+    host.set_available(22 * GIB + GIB / 2);
+    assert_eq!(host.admit(&ResourceVector::ZERO), Ok(()));
+    assert!(host.budget().admitting);
+
+    // Disk: free space above the floor but below the unwritten promises.
+    let mut host = Host::shared_workstation();
+    let mut waiting = offered(1, 1000, GIB);
+    waiting.reserved.disk_bytes = 30 * GIB;
+    host.grants = vec![waiting];
+    host.sample().disk_free_bytes = 100 * GIB;
+    let rejection = host.admit(&ResourceVector::ZERO).expect_err("disk");
+    assert_eq!(rejection.code, QueueReasonCode::DiskLow);
+    assert_eq!(
+        rejection.message,
+        "needs 0.0 GiB of scratch disk; nothing can be granted now (free 100.0, floor 75.0, promised 30.0)"
+    );
+    assert_eq!(
+        host.budget().reasons,
+        vec!["scratch disk: nothing can be granted now (free 100.0, floor 75.0, promised 30.0)"]
+    );
+
+    // CPU: the foreground has taken more than the grants leave.
+    let mut host = Host::shared_workstation();
+    host.grants = vec![running(1, 6000, 2 * GIB, GIB)];
+    host.set_cpu(7000, 3000);
+    let rejection = host.admit(&ResourceVector::ZERO).expect_err("cpu");
+    assert_eq!(rejection.code, QueueReasonCode::ForegroundProtection);
+    assert!(!host.budget().admitting);
+    assert!(
+        host.budget().reasons[0]
+            .starts_with("CPU: 0.0 CPUs can be granted now (managed ceiling 3.0 of a static 8.0"),
+        "{:?}",
+        host.budget().reasons
+    );
+}

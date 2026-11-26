@@ -256,6 +256,12 @@ fn random_admission_sequences_never_break_capacity_or_immediate_safety() {
                 Err(rejection) => {
                     refused += 1;
                     assert!(!rejection.message.is_empty(), "{context}");
+                    // The budget must not advertise what `admit` refuses.
+                    assert!(
+                        !(report.admitting && q.fits_within(&report.free)),
+                        "{context}: budget offers what was refused: {}",
+                        rejection.message
+                    );
                 }
             }
 

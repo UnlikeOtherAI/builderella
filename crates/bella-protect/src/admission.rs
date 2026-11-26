@@ -113,22 +113,23 @@ pub(crate) fn cpu_view(input: &Input, static_ceiling: u64, external: u64) -> Cpu
 }
 
 /// Memory a new request could take without endangering the host:
-/// `A − F − G − Σ max(r_i − u_i, 0)`, floored at zero.
-fn memory_grantable(input: &Input, sample: &Telemetry, sums: &Totals) -> u64 {
+/// `A − F − G − Σ max(r_i − u_i, 0)`. `None` when that is negative, in which
+/// case not even an empty request passes.
+fn memory_headroom(input: &Input, sample: &Telemetry, sums: &Totals) -> Option<u64> {
     sample
         .memory_available_bytes
-        .saturating_sub(input.policy.available_memory_floor_bytes)
-        .saturating_sub(input.config.memory_guard_bytes)
-        .saturating_sub(sums.memory_promised)
+        .checked_sub(input.policy.available_memory_floor_bytes)?
+        .checked_sub(input.config.memory_guard_bytes)?
+        .checked_sub(sums.memory_promised)
 }
 
 /// Scratch disk a new request could take: free space minus the floor minus
-/// what is promised and not yet written, floored at zero.
-fn disk_grantable(input: &Input, sample: &Telemetry, sums: &Totals) -> u64 {
+/// what is promised and not yet written. `None` when that is negative.
+fn disk_headroom(input: &Input, sample: &Telemetry, sums: &Totals) -> Option<u64> {
     sample
         .disk_free_bytes
-        .saturating_sub(input.policy.disk_floor_bytes(sample.disk_total_bytes))
-        .saturating_sub(sums.disk_promised)
+        .checked_sub(input.policy.disk_floor_bytes(sample.disk_total_bytes))?
+        .checked_sub(sums.disk_promised)
 }
 
 /// A condition that closes admission for every request.
@@ -336,7 +337,7 @@ pub fn budget(input: &Input) -> Budget {
     let mut flags: Vec<AvailabilityFlag> = closed.iter().filter_map(|g| g.flag).collect();
     flags.sort();
     flags.dedup();
-    let admitting = closed.is_empty();
+    let mut admitting = closed.is_empty();
     let mut reasons: Vec<String> = closed.into_iter().map(|g| g.message).collect();
 
     let Ok(sample) = telemetry else {
@@ -348,6 +349,16 @@ pub fn budget(input: &Input) -> Budget {
             reasons,
         };
     };
+
+    // With no gate closed, an empty request can still fail the arithmetic,
+    // for instance when promises already exceed what is available.
+    if admitting
+        && let Err(short) =
+            check_capacity(input, &ResourceVector::ZERO, sample, &sums, &static_ceiling)
+    {
+        admitting = false;
+        reasons.push(format!("{}: {}", short.dimension, short.detail));
+    }
 
     let cpu = cpu_view(input, static_ceiling.cpu_milli, sample.cpu_external_milli());
     if cpu.external > cpu.entitlement {
@@ -385,12 +396,12 @@ pub fn budget(input: &Input) -> Budget {
         cpu_milli: cpu.ceiling,
         memory_bytes: static_ceiling.memory_bytes.min(
             sums.memory_charged
-                .saturating_add(memory_grantable(input, sample, &sums)),
+                .saturating_add(memory_headroom(input, sample, &sums).unwrap_or(0)),
         ),
         disk_bytes: static_ceiling.disk_bytes.min(
             sums.reserved
                 .disk_bytes
-                .saturating_add(disk_grantable(input, sample, &sums)),
+                .saturating_add(disk_headroom(input, sample, &sums).unwrap_or(0)),
         ),
         tokens: static_ceiling.tokens,
     };
@@ -532,23 +543,57 @@ pub fn admit(input: &Input, request: &ResourceVector) -> Result<(), Rejection> {
         Err(why) => return Err(reject(QueueReasonCode::StaleTelemetry, why)),
     };
 
+    check_capacity(input, request, sample, &sums, &static_ceiling).map_err(Shortage::rejection)
+}
+
+/// Why a request does not fit right now.
+struct Shortage {
+    code: QueueReasonCode,
+    /// The dimension that is short, for a budget reason.
+    dimension: String,
+    /// What was asked for, e.g. `18.0 GiB`.
+    need: String,
+    /// What there is instead, with its numbers.
+    detail: String,
+}
+
+impl Shortage {
+    fn rejection(self) -> Rejection {
+        reject(self.code, format!("needs {}; {}", self.need, self.detail))
+    }
+}
+
+fn short(code: QueueReasonCode, dimension: &str, need: String, detail: String) -> Shortage {
+    Shortage {
+        code,
+        dimension: dimension.to_string(),
+        need,
+        detail,
+    }
+}
+
+/// The two checks of §4 for one request, given that no gate is closed.
+fn check_capacity(
+    input: &Input,
+    request: &ResourceVector,
+    sample: &Telemetry,
+    sums: &Totals,
+    static_ceiling: &ResourceVector,
+) -> Result<(), Shortage> {
     // Policy capacity, CPU.
     let cpu = cpu_view(input, static_ceiling.cpu_milli, sample.cpu_external_milli());
     let reserved_cpu = sums.reserved.cpu_milli;
-    let cpu_fits = reserved_cpu
-        .checked_add(request.cpu_milli)
-        .is_some_and(|need| need <= cpu.ceiling);
-    if !cpu_fits {
-        let fits_static = reserved_cpu
-            .checked_add(request.cpu_milli)
-            .is_some_and(|need| need <= cpu.static_ceiling);
+    let need_cpu = reserved_cpu.checked_add(request.cpu_milli);
+    if !need_cpu.is_some_and(|need| need <= cpu.ceiling) {
         let grantable = cpu.ceiling.saturating_sub(reserved_cpu);
+        let fits_static = need_cpu.is_some_and(|need| need <= cpu.static_ceiling);
         return Err(if fits_static {
-            reject(
+            short(
                 QueueReasonCode::ForegroundProtection,
+                "CPU",
+                cpus(request.cpu_milli),
                 format!(
-                    "needs {}; {} can be granted now (managed ceiling {} of a static {}, because the foreground uses {} against a {} entitlement; reserved {})",
-                    cpus(request.cpu_milli),
+                    "{} can be granted now (managed ceiling {} of a static {}, because the foreground uses {} against a {} entitlement; reserved {})",
                     cpus(grantable),
                     cpus_bare(cpu.ceiling),
                     cpus_bare(cpu.static_ceiling),
@@ -558,11 +603,12 @@ pub fn admit(input: &Input, request: &ResourceVector) -> Result<(), Rejection> {
                 ),
             )
         } else {
-            reject(
+            short(
                 QueueReasonCode::WaitingForCapacity,
+                "CPU",
+                cpus(request.cpu_milli),
                 format!(
-                    "needs {}; {} are unreserved (ceiling {}, reserved {})",
-                    cpus(request.cpu_milli),
+                    "{} are unreserved (ceiling {}, reserved {})",
                     cpus(grantable),
                     cpus_bare(cpu.ceiling),
                     cpus_bare(reserved_cpu)
@@ -577,11 +623,12 @@ pub fn admit(input: &Input, request: &ResourceVector) -> Result<(), Rejection> {
         .checked_add(request.memory_bytes)
         .is_some_and(|need| need <= static_ceiling.memory_bytes);
     if !memory_fits {
-        return Err(reject(
+        return Err(short(
             QueueReasonCode::WaitingForCapacity,
+            "memory",
+            format!("{} of memory", gib(request.memory_bytes)),
             format!(
-                "needs {} of memory; {} is unreserved (ceiling {}, charged to grants {})",
-                gib(request.memory_bytes),
+                "{} is unreserved (ceiling {}, charged to grants {})",
                 gib(static_ceiling
                     .memory_bytes
                     .saturating_sub(sums.memory_charged)),
@@ -592,14 +639,18 @@ pub fn admit(input: &Input, request: &ResourceVector) -> Result<(), Rejection> {
     }
 
     // Immediate safety, memory.
-    let safe = memory_grantable(input, sample, &sums);
-    if request.memory_bytes > safe {
-        return Err(reject(
+    let safe = memory_headroom(input, sample, sums);
+    if !safe.is_some_and(|safe| request.memory_bytes <= safe) {
+        let grantable = match safe {
+            Some(safe) => gib(safe),
+            None => "nothing".to_string(),
+        };
+        return Err(short(
             QueueReasonCode::ForegroundProtection,
+            "memory",
+            gib(request.memory_bytes),
             format!(
-                "needs {}; {} can be granted safely now (available {}, floor {}, guard {}, promised {})",
-                gib(request.memory_bytes),
-                gib(safe),
+                "{grantable} can be granted safely now (available {}, floor {}, guard {}, promised {})",
                 gib_bare(sample.memory_available_bytes),
                 gib_bare(input.policy.available_memory_floor_bytes),
                 gib_bare(input.config.memory_guard_bytes),
@@ -615,11 +666,12 @@ pub fn admit(input: &Input, request: &ResourceVector) -> Result<(), Rejection> {
         .checked_add(request.disk_bytes)
         .is_some_and(|need| need <= static_ceiling.disk_bytes);
     if !disk_fits {
-        return Err(reject(
+        return Err(short(
             QueueReasonCode::WaitingForCapacity,
+            "scratch disk",
+            format!("{} of scratch disk", gib(request.disk_bytes)),
             format!(
-                "needs {} of scratch disk; {} is unreserved (ceiling {}, reserved {})",
-                gib(request.disk_bytes),
+                "{} is unreserved (ceiling {}, reserved {})",
                 gib(static_ceiling
                     .disk_bytes
                     .saturating_sub(sums.reserved.disk_bytes)),
@@ -630,14 +682,18 @@ pub fn admit(input: &Input, request: &ResourceVector) -> Result<(), Rejection> {
     }
 
     // Live disk: free space, the floor, and promises not yet written.
-    let disk = disk_grantable(input, sample, &sums);
-    if request.disk_bytes > disk {
-        return Err(reject(
+    let disk = disk_headroom(input, sample, sums);
+    if !disk.is_some_and(|disk| request.disk_bytes <= disk) {
+        let grantable = match disk {
+            Some(disk) => gib(disk),
+            None => "nothing".to_string(),
+        };
+        return Err(short(
             QueueReasonCode::DiskLow,
+            "scratch disk",
+            format!("{} of scratch disk", gib(request.disk_bytes)),
             format!(
-                "needs {} of scratch disk; {} can be granted now (free {}, floor {}, promised {})",
-                gib(request.disk_bytes),
-                gib(disk),
+                "{grantable} can be granted now (free {}, floor {}, promised {})",
                 gib_bare(sample.disk_free_bytes),
                 gib_bare(input.policy.disk_floor_bytes(sample.disk_total_bytes)),
                 gib_bare(sums.disk_promised)
@@ -645,7 +701,7 @@ pub fn admit(input: &Input, request: &ResourceVector) -> Result<(), Rejection> {
         ));
     }
 
-    // Policy capacity, tokens. Undeclared tokens were refused above.
+    // Policy capacity, tokens. Undeclared tokens were refused earlier.
     for (name, count) in request.tokens.iter().filter(|(_, count)| **count > 0) {
         let capacity = input.policy.tokens.get(name).copied().unwrap_or(0);
         let held = sums.reserved.token(name);
@@ -653,10 +709,12 @@ pub fn admit(input: &Input, request: &ResourceVector) -> Result<(), Rejection> {
             .checked_add(*count)
             .is_some_and(|need| need <= capacity);
         if !fits {
-            return Err(reject(
+            return Err(short(
                 QueueReasonCode::WaitingForCapacity,
+                &format!("token `{name}`"),
+                format!("{count} of token `{name}`"),
                 format!(
-                    "needs {count} of token `{name}`; {} free (declared {capacity}, reserved {held})",
+                    "{} free (declared {capacity}, reserved {held})",
                     capacity.saturating_sub(held)
                 ),
             ));

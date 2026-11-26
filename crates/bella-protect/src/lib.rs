@@ -228,7 +228,8 @@ pub struct Budget {
     /// without fresh telemetry. It describes capacity only; whether an
     /// offer would be accepted at all is `admitting`.
     pub free: ResourceVector,
-    /// Would any new offer be accepted right now?
+    /// Would an offer be accepted right now? [`admit`] accepts a request
+    /// exactly when this is `true` and the request fits within `free`.
     pub admitting: bool,
     /// Sorted, without duplicates.
     pub flags: Vec<AvailabilityFlag>,
