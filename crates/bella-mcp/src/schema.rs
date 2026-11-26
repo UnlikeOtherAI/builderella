@@ -7,6 +7,7 @@
 use serde_json::Value;
 
 /// Assertion keywords [`validate`] enforces.
+#[cfg(test)]
 pub(crate) const ASSERTIONS: &[&str] = &[
     "type",
     "enum",
@@ -24,6 +25,7 @@ pub(crate) const ASSERTIONS: &[&str] = &[
 ];
 
 /// Keywords that describe a value without constraining it.
+#[cfg(test)]
 pub(crate) const ANNOTATIONS: &[&str] = &["description", "title", "default"];
 
 /// Check `instance` against `schema`. The error names the offending
