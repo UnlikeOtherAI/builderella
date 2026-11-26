@@ -24,6 +24,10 @@ npm run build          # static files into dist/
 npm run preview        # serve dist/ to check the build
 ```
 
+`npm run dev` and `npm run preview` refuse requests for a host name they do
+not know. To open either from another machine by name, start it with
+`--host 0.0.0.0` and `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=<that-name>`.
+
 `npm run dev` forwards `/api` to `http://127.0.0.1:7420`. To use another
 controller:
 

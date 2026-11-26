@@ -9,7 +9,7 @@ import { formatDuration, formatPercent, formatResources } from '../lib/format';
 import { currentAttempt, describeConstraints, sessionLabel } from '../lib/job';
 import { PRIORITY_ORDER, phaseLabel, priorityLabel, type Tone } from '../lib/labels';
 
-const PRIORITY_TONE: Record<string, Tone> = { urgent: 'bad', interactive: 'info' };
+const PRIORITY_TONE: Record<string, Tone> = { urgent: 'warn', interactive: 'info' };
 
 function PriorityChip({ priority }: { priority: string }) {
   return <Chip tone={PRIORITY_TONE[priority] ?? 'neutral'}>{priorityLabel(priority)}</Chip>;
@@ -117,19 +117,22 @@ export function QueueView() {
 
               <section aria-labelledby="running-title">
                 <h2 id="running-title">
-                  Placed on a machine ({runningShown.length}
+                  In progress ({runningShown.length}
                   {filtered ? ` of ${running.length}` : ''})
                 </h2>
+                <p className="muted">
+                  Jobs that are uploading their snapshot or hold a reservation on a machine.
+                </p>
                 {active.error && active.data === undefined ? (
                   <ErrorPanel error={active.error} onRetry={() => void active.refetch()} />
                 ) : active.data === undefined ? (
                   <p className="state state-loading" role="status">
-                    Loading running jobs…
+                    Loading jobs in progress…
                   </p>
                 ) : running.length === 0 ? (
-                  <Empty title="Nothing is running">No job currently holds a machine.</Empty>
+                  <Empty title="Nothing is in progress">No job currently holds a machine.</Empty>
                 ) : runningShown.length === 0 ? (
-                  <Empty title="No running job matches these filters" />
+                  <Empty title="No job in progress matches these filters" />
                 ) : (
                   <RunningTable jobs={runningShown} />
                 )}

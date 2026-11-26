@@ -143,8 +143,11 @@ function EnvironmentBody({ environment }: { environment: EnvironmentView }) {
   return (
     <>
       <h1>
-        Environment <Ident value={environment.id} copy />
+        Environment <Ident value={environment.id} />
       </h1>
+      <p>
+        <CopyButton value={environment.id} label="Copy environment id" />
+      </p>
       <p className="chips">
         <Chip tone={environmentStateTone(environment.state)}>
           {environmentStateLabel(environment.state)}
@@ -190,9 +193,11 @@ function EnvironmentBody({ environment }: { environment: EnvironmentView }) {
             <p className="muted">
               {renewal === null
                 ? 'The deadline has passed, so the controller will refuse a renewal.'
-                : gain > 1000
+                : gain >= 60_000
                   ? `Renewing now would move the end to ${formatTimestamp(renewal.deadline)} (${formatDuration(gain)} later), limited by the ${leaseLimitLabel(renewal.limit)}.`
-                  : `Renewing now would not move the end: it is already set by the ${leaseLimitLabel(renewal.limit)}.`}
+                  : renewal.limit === 'maximum'
+                    ? 'Renewing now would not move the end: it is already set by the maximum lifetime.'
+                    : `Renewing now would move the end by less than a minute: it is set by the ${leaseLimitLabel(renewal.limit)}.`}
             </p>
             {viewer ? (
               <p className="muted">You are signed in as a viewer. Renewing or finishing needs the developer role.</p>
@@ -224,7 +229,7 @@ function EnvironmentBody({ environment }: { environment: EnvironmentView }) {
         )}
 
         <div aria-live="polite">
-          {renew.isSuccess && renewedTo ? (
+          {live && renew.isSuccess && renewedTo ? (
             <p className="note note-ok">
               Renewed. The controller now ends it at {formatTimestamp(renewedTo.deadline)}, by the{' '}
               {leaseLimitLabel(renewedTo.limit)}.

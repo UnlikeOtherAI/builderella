@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { HashRouter, Navigate, NavLink, Route, Routes } from 'react-router';
 import { clearToken, isMock } from './api/client';
 import { useToken, useWhoAmI } from './api/hooks';
@@ -16,6 +16,12 @@ import { SignIn } from './views/SignIn';
 
 export function App() {
   const token = useToken();
+  const queryClient = useQueryClient();
+  // Signed out, or the controller rejected the token: keep nothing that was
+  // read with it.
+  useEffect(() => {
+    if (!isMock && !token) queryClient.clear();
+  }, [token, queryClient]);
   if (!isMock && !token) return <SignIn />;
   return (
     // A different token is a different session: start its stream afresh.
@@ -52,15 +58,11 @@ function LiveStatus() {
 }
 
 function Shell({ signedIn }: { signedIn: boolean }) {
-  const queryClient = useQueryClient();
   const who = useWhoAmI();
   const live = useLive();
   const [theme, setTheme] = useState<ThemeChoice>(readTheme);
 
-  const signOut = () => {
-    clearToken();
-    queryClient.clear();
-  };
+  const signOut = () => clearToken();
   const link = ({ isActive }: { isActive: boolean }) => (isActive ? 'nav-link active' : 'nav-link');
 
   return (

@@ -319,6 +319,10 @@ main:focus {
   border-radius: var(--radius);
   padding: var(--gap);
 }
+.card > :first-child,
+.card > .form > :first-child {
+  margin-top: 0;
+}
 .stack-list {
   display: grid;
   gap: 10px;
@@ -568,6 +572,23 @@ dialog.dialog h2 {
   font-size: 0.8125rem;
   margin: 0;
 }
+input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 32px;
+  /* A chevron drawn with gradients, so it follows the theme. */
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 17px) 50%,
+    calc(100% - 12px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
 input:not([type='checkbox']),
 select {
   font: inherit;
@@ -575,7 +596,7 @@ select {
   padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--surface);
+  background-color: var(--surface);
   color: var(--text);
   width: 100%;
   min-width: 0;
@@ -683,6 +704,7 @@ tbody tr:last-child td {
     clip: rect(0, 0, 0, 0);
   }
   table.stack,
+  table.stack caption,
   table.stack tbody,
   table.stack tr,
   table.stack td {
@@ -822,6 +844,12 @@ tbody tr:last-child td {
   margin: 0;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@media (max-width: 520px) {
+  .cap-legend dd .muted {
+    display: block;
+  }
 }
 .swatch {
   flex: none;

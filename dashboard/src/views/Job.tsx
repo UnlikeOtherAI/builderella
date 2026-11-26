@@ -5,7 +5,18 @@ import type { ArtifactView, AttemptView, JobView as Job, StepView } from '../api
 import { JobResult, JobResultChips } from '../components/JobResult';
 import { LogViewer } from '../components/LogViewer';
 import { QueueReasonView } from '../components/QueueReasonView';
-import { Ago, Chip, ConfirmDialog, Empty, ErrorPanel, Fact, Facts, Ident, Loadable } from '../components/ui';
+import {
+  Ago,
+  Chip,
+  ConfirmDialog,
+  CopyButton,
+  Empty,
+  ErrorPanel,
+  Fact,
+  Facts,
+  Ident,
+  Loadable,
+} from '../components/ui';
 import {
   formatBytes,
   formatCpu,
@@ -144,8 +155,11 @@ function JobBody({ job }: { job: Job }) {
         <Link to="/jobs">Job</Link> / {shortId(job.id)}
       </p>
       <h1>
-        {job.recipe} <Ident value={job.id} copy />
+        {job.recipe} <Ident value={job.id} />
       </h1>
+      <p>
+        <CopyButton value={job.id} label="Copy job id" />
+      </p>
       <p className="chips">
         <Chip tone={job.phase === 'quarantined' ? 'bad' : job.phase === 'finished' ? 'neutral' : 'info'}>
           {phaseLabel(job.phase)}
@@ -287,7 +301,7 @@ function CancelSection({ job }: { job: Job }) {
         <p className="muted">
           {job.phase === 'finished'
             ? 'The job has finished; there is nothing to cancel.'
-            : 'The job already has a result and is cleaning up; there is nothing left to cancel.'}
+            : 'The job already has a result; there is nothing left to cancel.'}
         </p>
       )}
       {cancel.error ? <ErrorPanel error={cancel.error} /> : null}

@@ -290,7 +290,9 @@ export function describeError(error: unknown): ErrorText {
       403: 'Not allowed',
       404: 'Not found',
       409: 'Not possible in the current state',
+      502: 'The controller is not answering',
       503: 'The controller is unavailable',
+      504: 'The controller is not answering',
     };
     return {
       title: titles[error.status] ?? `The controller refused the request (HTTP ${error.status})`,

@@ -17,6 +17,9 @@ import {
 } from '../lib/labels';
 import { diskFloorBytes } from '../lib/policy';
 
+/** Telemetry older than this is no longer fresh (`TELEMETRY_STALE_AFTER` in bella-core). */
+const STALE_AFTER_MS = 15_000;
+
 export function FleetView() {
   const fleet = useFleet();
   return (
@@ -65,7 +68,11 @@ function MachineCard({ machine, now }: { machine: MachineView; now: number }) {
   const telemetry = machine.telemetry ?? null;
   const capacity = machineCapacity(machine);
   const reasons = notAdmittingReasons(machine);
-  const soft = machine.enforcement.cpu !== 'hard' || machine.enforcement.memory !== 'hard';
+  const levels = [machine.enforcement.cpu, machine.enforcement.memory];
+  // Anything that is neither a kernel limit nor a bounded guest is treated
+  // as policy only, including a level this dashboard does not know.
+  const policyOnly = levels.some((level) => level !== 'hard' && level !== 'bounded_guest');
+  const guest = !policyOnly && levels.includes('bounded_guest');
   const budget = machine.effective_budget ?? null;
   const sampleAge = telemetry ? Math.max(now - telemetry.sampled_at, 0) : null;
 
@@ -92,7 +99,8 @@ function MachineCard({ machine, now }: { machine: MachineView; now: number }) {
           ))}
         </p>
         <p className="muted">
-          {machine.connected ? 'Connected' : 'Not connected'}, {lastSeenText(machine, now)}.
+          {machine.connected ? 'Connected to the controller' : 'Not connected to the controller'};{' '}
+          {lastSeenText(machine, now)}.
         </p>
       </header>
 
@@ -118,10 +126,22 @@ function MachineCard({ machine, now }: { machine: MachineView; now: number }) {
         )}
       </section>
 
-      {soft ? (
+      {policyOnly ? (
         <p className="note note-warn">
           Limits on this machine are not kernel guarantees. Managed work is kept within its share by
           policy and can exceed it before the worker reacts.
+        </p>
+      ) : null}
+      {guest ? (
+        <p className="note note-warn">
+          The worker runs inside a guest. Its limits hold inside that guest; what the host itself
+          uses is outside them.
+        </p>
+      ) : null}
+      {sampleAge !== null && sampleAge > STALE_AFTER_MS ? (
+        <p className="note note-warn">
+          The bars show the last measurements received, taken {formatDuration(sampleAge)} ago. Use on
+          the machine may have changed since.
         </p>
       ) : null}
 

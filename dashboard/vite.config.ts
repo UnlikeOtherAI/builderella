@@ -12,7 +12,8 @@ export default defineConfig(({ mode }) => {
   return {
     base: './',
     plugins: [react()],
-    build: { outDir: 'dist', sourcemap: true },
+    // No source maps: the files are embedded in the controller binary.
+    build: { outDir: 'dist', sourcemap: false },
     server: {
       proxy: {
         '/api': { target: controller, changeOrigin: true, secure: false },
