@@ -11,6 +11,9 @@ repository.workspace = true
 bella-core.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { version = "0.2", default-features = false }
+
 [dev-dependencies]
 tempfile.workspace = true
 
