@@ -4,7 +4,7 @@
 mod common;
 
 use bella_core::ids::Digest;
-use bella_core::snapshot::{Entry, MANIFEST_VERSION, Manifest, RootManifest};
+use bella_core::snapshot::{Entry, MANIFEST_VERSION, Manifest, ManifestError, RootManifest};
 use bella_core::store::{MemStore, StoreError, put_bytes};
 use bella_materialize::{MaterializeError, MaterializeOptions, materialize, verify_tree};
 use common::{HostileStore, Snap, is_empty_dir, options, pattern, single_root};
@@ -117,12 +117,52 @@ fn a36_escaping_and_absolute_symlink_targets_are_rejected() {
     snap.link("a/b/up", "../..");
     snap.link("out", "a/b/up/..");
     let manifest = snap.manifest();
-    assert!(manifest.validate().is_ok());
+    assert!(matches!(
+        manifest.validate(),
+        Err(ManifestError::SymlinkEscapes { path, .. }) if path == "out"
+    ));
     let error = materialize(&manifest, &snap.store, &dest, &options()).unwrap_err();
     assert!(
         matches!(
             &error,
             MaterializeError::SymlinkEscapes { path, target } if path == "out" && target == "a/b/up/.."
+        ),
+        "{error}"
+    );
+    assert!(!dest.exists());
+}
+
+/// The link that leaves its root through another link is named by its path
+/// in the destination, mount included.
+#[test]
+fn a36_symlink_chain_in_a_mounted_root_is_named_with_its_mount() {
+    let store = MemStore::new();
+    let link = |path: &str, target: &str| Entry::Symlink {
+        path: path.into(),
+        target: target.into(),
+    };
+    let manifest = Manifest::new(vec![
+        RootManifest {
+            mount: "app".into(),
+            entries: vec![
+                file_entry(&store, "sub/x", b"x"),
+                link("sub/top", ".."),
+                link("up", "sub/top/../lib/y"),
+            ],
+        },
+        RootManifest {
+            mount: "lib".into(),
+            entries: vec![file_entry(&store, "y", b"y")],
+        },
+    ]);
+    let tmp = tempfile::tempdir().unwrap();
+    let dest = tmp.path().join("ws");
+    let error = materialize(&manifest, &store, &dest, &options()).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            MaterializeError::SymlinkEscapes { path, target }
+                if path == "app/up" && target == "sub/top/../lib/y"
         ),
         "{error}"
     );
@@ -477,7 +517,10 @@ fn a36_entangled_symlinks_are_refused_instead_of_resolved_forever() {
         snap.link(&format!("l{index}"), &through_l0);
     }
     let manifest = snap.manifest();
-    assert!(manifest.validate().is_ok());
+    assert!(matches!(
+        manifest.validate(),
+        Err(ManifestError::SymlinksTooComplex { .. })
+    ));
 
     let tmp = tempfile::tempdir().unwrap();
     let dest = tmp.path().join("links");

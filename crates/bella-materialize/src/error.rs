@@ -16,7 +16,10 @@ use std::path::PathBuf;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum MaterializeError {
-    /// `Manifest::validate` rejected the manifest. Nothing was written.
+    /// `Manifest::validate` rejected the manifest. Nothing was written. Its
+    /// two findings about links followed through each other are reported as
+    /// [`SymlinkEscapes`](Self::SymlinkEscapes) and
+    /// [`SymlinksTooComplex`](Self::SymlinksTooComplex) instead.
     #[error("invalid manifest: {0}")]
     InvalidManifest(#[from] ManifestError),
 
@@ -50,13 +53,13 @@ pub enum MaterializeError {
     #[error("`{path}` conflicts with `{with}`")]
     Conflict { path: String, with: String },
 
-    /// The link's target, resolved through the other links of the manifest,
-    /// leaves the source root it belongs to.
+    /// The link's target, followed through the other links of its source
+    /// root, leaves that root. Found by `Manifest::validate`.
     #[error("symlink `{path}` -> `{target}` resolves outside its source root")]
     SymlinkEscapes { path: String, target: String },
 
     /// The manifest's symlinks point through each other so heavily that
-    /// working out where they lead was abandoned at `path`.
+    /// `Manifest::validate` gave up working out where they lead at `path`.
     #[error("the symlinks of the manifest are too entangled to resolve (stopped at `{path}`)")]
     SymlinksTooComplex { path: String },
 

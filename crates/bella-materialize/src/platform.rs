@@ -101,9 +101,8 @@ impl PathLimits {
 /// `os`, on a volume that is or is not `case_sensitive`, without touching the
 /// disk.
 ///
-/// * Windows: names [`windows_incompatibility`] rejects (plus the reserved
-///   device names it does not list), and symlink targets containing `\`, a
-///   drive prefix or a device name.
+/// * Windows: names [`windows_incompatibility`] rejects, and symlink
+///   targets containing `\`, a drive prefix or such a name.
 /// * Every OS: names, relative paths and link targets over [`PathLimits`].
 ///   `materialize` repeats the path check with the real destination, which
 ///   can only add findings.
@@ -185,7 +184,7 @@ pub(crate) fn name_and_length_problems(
     let mut long_dirs: BTreeSet<String> = BTreeSet::new();
 
     let check_names = |found: &mut Vec<Incompatibility>, full: &str, own: &str| {
-        if windows && let Some(reason) = windows_name_problem(own) {
+        if windows && let Some(reason) = windows_incompatibility(own) {
             found.push(Incompatibility::WindowsName {
                 path: full.to_string(),
                 reason,
@@ -354,33 +353,6 @@ pub(crate) fn collision_problems(
     found
 }
 
-/// Why `path` cannot be a Windows path, if it cannot.
-fn windows_name_problem(path: &str) -> Option<String> {
-    windows_incompatibility(path).or_else(|| path.split('/').find_map(reserved_device_name))
-}
-
-/// Device names Windows reserves in every directory that
-/// `windows_incompatibility` does not list: the console pseudo-files, port
-/// number 0, superscript port digits, and any reserved name followed by
-/// spaces before the extension.
-fn reserved_device_name(component: &str) -> Option<String> {
-    let stem = component.split('.').next().unwrap_or("").trim_end();
-    let upper = stem.to_ascii_uppercase();
-    let reserved = match upper.as_str() {
-        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" => true,
-        other => ["COM", "LPT"].iter().any(|port| {
-            other.strip_prefix(port).is_some_and(|rest| {
-                let mut chars = rest.chars();
-                matches!(
-                    (chars.next(), chars.next()),
-                    (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
-                )
-            })
-        }),
-    };
-    reserved.then(|| format!("`{component}` is a reserved device name"))
-}
-
 /// Why a symlink target would not mean on Windows what it meant at the
 /// origin, if it would not.
 fn windows_target_problem(target: &str) -> Option<String> {
@@ -393,15 +365,17 @@ fn windows_target_problem(target: &str) -> Option<String> {
     target
         .split('/')
         .filter(|component| !matches!(*component, "" | "." | ".."))
-        .find_map(windows_name_problem)
+        .find_map(windows_incompatibility)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The device-name rules are `bella_core`'s; a file with such a name is
+    /// reported for Windows and for no other system.
     #[test]
-    fn reserved_names_beyond_the_core_list() {
+    fn reserved_device_names_are_windows_name_problems() {
         for name in [
             "CONIN$",
             "conout$",
@@ -412,10 +386,23 @@ mod tests {
             "aux .c",
             "NUL  ",
         ] {
-            assert!(windows_name_problem(name).is_some(), "{name:?}");
+            let manifest = files(&[name]);
+            assert!(
+                matches!(
+                    name_and_length_problems(&manifest, Os::Windows, 0).as_slice(),
+                    [Incompatibility::WindowsName { path, reason }]
+                        if path == name && !reason.is_empty()
+                ),
+                "{name:?}"
+            );
+            assert!(name_and_length_problems(&manifest, Os::Linux, 0).is_empty());
         }
         for name in ["COM10", "console", "com", "auxiliary.c", "lpt", "COMA"] {
-            assert!(windows_name_problem(name).is_none(), "{name:?}");
+            let manifest = files(&[name]);
+            assert!(
+                name_and_length_problems(&manifest, Os::Windows, 0).is_empty(),
+                "{name:?}"
+            );
         }
     }
 

@@ -11,7 +11,9 @@
 //!
 //! * **Identity and counters** — the [`Enrollment`], the current machine
 //!   policy, the connection generation, the newest controller epoch seen,
-//!   and the machine owner's pause and drain settings.
+//!   and the machine owner's pause and drain settings. The fleet and the
+//!   machine are recorded once; a controller that moves is followed with
+//!   [`Journal::set_controller_endpoint`], without enrolling again.
 //! * **Attempts** — one [`AttemptRecord`] per accepted offer, moved through
 //!   [`LocalAttemptState`](bella_core::protocol::LocalAttemptState) by
 //!   operations that check the current state first.
