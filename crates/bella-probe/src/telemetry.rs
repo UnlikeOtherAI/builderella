@@ -517,11 +517,12 @@ mod tests {
     /// one second per sample without sleeping, so the slow readings are
     /// refreshed ten times, exactly as in 100 real seconds.
     ///
-    /// The budget is 1 % of one CPU: 10 ms per sample. Run it alone, since
-    /// other tests in the same process add to the measured time:
+    /// The budget is 1 % of one CPU: 10 ms per sample. Recorded results are
+    /// in the crate documentation. Run it alone, since other tests in the
+    /// same process add to the measured time:
     ///
     /// ```text
-    /// cargo test -p bella-probe --release -- --ignored --nocapture sampling_cost
+    /// cargo test -p bella-probe --lib -- --ignored --nocapture sampling_cost
     /// ```
     #[test]
     #[ignore = "measures process CPU time; run alone"]

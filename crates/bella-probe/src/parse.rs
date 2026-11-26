@@ -147,9 +147,11 @@ pub fn java(text: &str) -> Option<Java> {
     };
     Some(Java {
         version: normalise_java_version(&raw_version),
+        // The properties block has a `java.runtime.name = ...` line that
+        // also mentions the runtime; the banner line has no `=`.
         runtime: text
             .lines()
-            .find(|line| line.contains("Runtime Environment"))
+            .find(|line| line.contains("Runtime Environment") && !line.contains('='))
             .and_then(non_empty),
         home: property("java.home"),
         vendor: property("java.vendor"),
@@ -653,6 +655,10 @@ OpenJDK 64-Bit Server VM Temurin-17.0.12+7 (build 17.0.12+7, mixed mode)
             Some("/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home")
         );
         assert_eq!(parsed.vendor.as_deref(), Some("Eclipse Adoptium"));
+        assert_eq!(
+            parsed.runtime.as_deref(),
+            Some("OpenJDK Runtime Environment Temurin-17.0.12+7 (build 17.0.12+7)")
+        );
     }
 
     #[test]

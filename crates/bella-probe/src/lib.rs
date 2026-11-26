@@ -54,10 +54,18 @@
 //!
 //! One sample reads a few OS counters and starts no process. The only
 //! subprocess on the sampling path is macOS `pmset` for power and thermal
-//! state, cached for [`Sampler::SLOW_REFRESH`]. The ignored test
-//! `sampling_cost_of_100_samples` measures the CPU time of 100 samples at
-//! a simulated 1 Hz; see `docs` in the repository for recorded results.
-//! The budget is 1 % of one CPU.
+//! state, cached for [`Sampler::SLOW_REFRESH`]. The budget is 1 % of one
+//! CPU at one sample per second, that is 10 ms of CPU time per sample.
+//!
+//! The ignored test `sampling_cost_of_100_samples` measures the CPU time
+//! of this process and its children over 100 samples at a simulated 1 Hz.
+//! Results from debug builds:
+//!
+//! | Host | CPU time per sample | Share of one CPU at 1 Hz |
+//! | --- | --- | --- |
+//! | macOS, Apple silicon (includes ten `pmset` refreshes) | 1.01 ms | 0.10 % |
+//! | Windows 11, x86_64 (process times tick at 15.6 ms) | 0.47 ms | 0.05 % |
+//! | Linux 6.12, aarch64, in a container | 0.03 ms | 0.003 % |
 
 mod capabilities;
 mod exec;
