@@ -1096,9 +1096,14 @@ fn self_test_exercises_and_verifies_every_enabled_dimension() {
     // The self-test removes its own scopes.
     assert_eq!(scope_dirs(adapter.base()), before);
 
-    // The worker itself is in the supervisor leaf, outside every scope.
+    // The base holds no process of its own (the worker moved to a leaf),
+    // which is what lets its children have controllers.
+    assert_eq!(
+        fs::read_to_string(adapter.base().join("cgroup.procs")).unwrap(),
+        ""
+    );
     let own = fs::read_to_string("/proc/self/cgroup").unwrap();
-    assert!(own.trim_end().ends_with("/supervisor"), "{own}");
+    assert!(!own.contains("/bella-"), "{own}");
 
     let native = bella_contain::native().expect("native");
     assert_eq!(native.kind(), ScopeKind::LinuxCgroup);
