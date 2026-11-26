@@ -1006,6 +1006,16 @@ tr.contact-disconnected {
 .meter-over .meter-bar > span {
   background: var(--bad-fg);
 }
+/* Job links stay on one line, so a long queue reason cannot fold them. */
+table.compact td > a {
+  white-space: nowrap;
+}
+table.compact .ident {
+  flex-wrap: nowrap;
+}
+.nowrap {
+  white-space: nowrap;
+}
 .running-list {
   display: flex;
   flex-wrap: wrap;

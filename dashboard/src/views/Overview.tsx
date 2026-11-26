@@ -446,7 +446,7 @@ function Attempts({
                       <td data-label="Phase">
                         <Phase row={row} />
                       </td>
-                      <td data-label={launching ? 'In this phase' : 'Elapsed'}>
+                      <td data-label={launching ? 'In this phase' : 'Elapsed'} className="nowrap">
                         <Elapsed since={launching ? row.phaseSince : row.runningSince} now={now} />
                       </td>
                       {launching ? null : (
@@ -501,7 +501,7 @@ function QueueTable({ queue, readAt }: { queue: QueueView; readAt: number }) {
                 </td>
                 <td data-label="Project">{job.project_name}</td>
                 <td data-label="Priority">{priorityLabel(job.priority)}</td>
-                <td data-label="Waited">{formatDuration(waiting_ms + age)}</td>
+                <td data-label="Waited" className="nowrap">{formatDuration(waiting_ms + age)}</td>
                 <td data-label="Why it waits">
                   {job.queue_reason ? (
                     <>
