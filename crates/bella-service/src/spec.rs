@@ -155,6 +155,10 @@ impl ServiceSpec {
             if account.trim().is_empty() || account.trim() != account {
                 return Err(invalid("the account is empty or padded with spaces"));
             }
+            // `user:group` would change what `chown` does with it.
+            if os != Os::Windows && account.contains(|c: char| c == ':' || c.is_whitespace()) {
+                return Err(invalid("a Unix account name cannot contain spaces or `:`"));
+            }
         }
         let mut seen = BTreeSet::new();
         for (key, value) in &self.env {

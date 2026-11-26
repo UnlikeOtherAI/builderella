@@ -13,7 +13,7 @@ fn unix_spec(role: Role, scope: Scope) -> ServiceSpec {
     let mut spec = ServiceSpec::new(
         role,
         scope,
-        "/home/builder/tools dir/\"bella\" é",
+        "/home/builder/tools dir é/bella",
         "/home/builder/work dir",
         "/home/builder/logs & more",
     );
@@ -81,7 +81,7 @@ Wants=network-online.target
 
 [Service]
 Type=exec
-ExecStart="/home/builder/tools dir/\"bella\" é" "worker" "run" "--data-dir" "/home/builder/data ü" "say \"hi\"" "back\\slash" "100%% $$HOME" "<a&'b'>" "" ";"
+ExecStart="/home/builder/tools dir é/bella" "worker" "run" "--data-dir" "/home/builder/data ü" "say \"hi\"" "back\\slash" "100%% $$HOME" "<a&'b'>" "" ";"
 WorkingDirectory=/home/builder/work dir
 Environment="BELLA_SERVICE_NAME=builderella-worker"
 Environment="LANG=cs_CZ.UTF-8"
@@ -156,7 +156,7 @@ fn macos_worker_agent() {
 	<string>builderella-worker</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/home/builder/tools dir/&quot;bella&quot; é</string>
+		<string>/home/builder/tools dir é/bella</string>
 		<string>worker</string>
 		<string>run</string>
 		<string>--data-dir</string>
@@ -413,7 +413,20 @@ fn values_that_could_forge_a_definition_are_refused() {
             });
         }
     }
-    rejected(Os::Linux, |spec| spec.executable = "/opt/$x/bella".into());
+    for path in [
+        "/opt/$x/bella",
+        "/opt/\"x\"/bella",
+        "/opt/x's/bella",
+        r"/opt/a\b",
+    ] {
+        rejected(Os::Linux, |spec| spec.executable = path.into());
+    }
+    for os in [Os::Linux, Os::Macos] {
+        rejected(os, |spec| {
+            spec.scope = Scope::System;
+            spec.account = Some("builder:staff".into());
+        });
+    }
     rejected(Os::Linux, |spec| spec.working_dir = "/work\\".into());
     rejected(Os::Windows, |spec| {
         spec.env.insert("Path".into(), "a".into());

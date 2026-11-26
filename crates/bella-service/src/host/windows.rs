@@ -310,7 +310,8 @@ impl Backend for Scm {
             None => InstallOutcome::Created,
             Some(service) => {
                 let found = differences(name, &service, &wanted)?;
-                if found.is_empty() {
+                let new_password = options.replace && options.password.is_some();
+                if found.is_empty() && !new_password {
                     InstallOutcome::Unchanged
                 } else {
                     require_managed(name)?;

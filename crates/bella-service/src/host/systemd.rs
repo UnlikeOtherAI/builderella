@@ -47,10 +47,11 @@ impl Systemd {
         self.runner.run("systemctl", &full)
     }
 
-    fn check(&self, scope: Scope, args: &[&str]) -> Result<(), ServiceError> {
+    /// Run a command that has to succeed, explaining the usual refusals.
+    fn check(&self, scope: Scope, args: &[&str]) -> Result<Output, ServiceError> {
         let output = self.run(scope, args)?;
         if output.success {
-            return Ok(());
+            return Ok(output);
         }
         let command = format!("systemctl {}", args.join(" "));
         if output.stderr.contains("Access denied")
@@ -179,24 +180,22 @@ impl Backend for Systemd {
             return Ok(ServiceStatus::NotInstalled);
         }
         let unit = unit_name(&id.name);
-        let args = ["show", unit.as_str(), PROPERTIES];
-        let output = self.run(id.scope, &args)?;
-        if !output.success {
-            return Err(unix::command_error("systemctl", &args, &output));
-        }
+        let output = self.check(id.scope, &["show", &unit, PROPERTIES])?;
         Ok(parse_show(&output.stdout))
     }
 
     fn start(&self, id: &ServiceId) -> Result<(), ServiceError> {
         self.require_installed(id)?;
         unix::require_root(id.scope, self.uid, "start")?;
-        self.check(id.scope, &["start", &unit_name(&id.name)])
+        self.check(id.scope, &["start", &unit_name(&id.name)])?;
+        Ok(())
     }
 
     fn stop(&self, id: &ServiceId) -> Result<(), ServiceError> {
         self.require_installed(id)?;
         unix::require_root(id.scope, self.uid, "stop")?;
-        self.check(id.scope, &["stop", &unit_name(&id.name)])
+        self.check(id.scope, &["stop", &unit_name(&id.name)])?;
+        Ok(())
     }
 }
 

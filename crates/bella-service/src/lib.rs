@@ -124,9 +124,9 @@ pub struct InstallOptions {
     /// or logon.
     pub start: bool,
     /// Password of the Windows account in [`ServiceSpec::account`]. Needed to
-    /// create or replace a service that runs as an ordinary user. It is not
-    /// compared with the installed one, so changing only the password needs
-    /// `replace` together with another change, or a reinstall.
+    /// create or replace a service that runs as an ordinary user. The installed
+    /// password cannot be read, so giving one together with `replace` always
+    /// replaces.
     pub password: Option<Password>,
 }
 
@@ -204,8 +204,11 @@ impl fmt::Display for ServiceStatus {
 /// Repeating a call with the same specification changes nothing and reports
 /// [`InstallOutcome::Unchanged`]. A different installed definition is an
 /// [`ServiceError::AlreadyInstalled`] error unless [`InstallOptions::replace`]
-/// is set; replacing restarts a running service. Missing log and working
-/// directories are created and, on Linux and macOS, handed to the account.
+/// is set. Replacing restarts a running service; without
+/// [`InstallOptions::start`] it is left stopped on macOS and Windows, and on
+/// Linux runs the old definition until restarted, with a warning. Missing log
+/// and working directories are created and, on Linux and macOS, handed to the
+/// account.
 pub fn install(spec: &ServiceSpec, options: &InstallOptions) -> Result<Installed, ServiceError> {
     host::backend()?.install(spec, options)
 }

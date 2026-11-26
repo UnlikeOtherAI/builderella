@@ -211,9 +211,11 @@ pub(crate) fn prepare_dir(
         .collect();
     fs::create_dir_all(directory).map_err(|e| io_error("create", directory, e))?;
     if let Some(account) = account {
-        for path in missing.iter().rev() {
+        // Deepest first, while the directories above are still ours, and never
+        // through a link.
+        for path in &missing {
             let path = path.to_string_lossy();
-            runner.check("chown", &["--", account, &path])?;
+            runner.check("chown", &["-h", "--", account, &path])?;
         }
     }
     Ok(())

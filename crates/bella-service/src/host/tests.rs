@@ -319,8 +319,9 @@ fn a_system_worker_owns_the_directories_created_for_it() {
         .into_iter()
         .filter(|c| c.starts_with("chown"))
         .collect();
-    let expected = [data.clone(), data.join("work"), data.join("logs")]
-        .map(|dir| format!("chown -- builder {}", dir.display()));
+    // `work` creates `data` too; the deeper directory is handed over first.
+    let expected = [data.join("work"), data.clone(), data.join("logs")]
+        .map(|dir| format!("chown -h -- builder {}", dir.display()));
     assert_eq!(owned, expected);
     manager.install(&spec, &InstallOptions::default()).unwrap();
     assert!(!rig.script.changes().iter().any(|c| c.starts_with("chown")));
@@ -440,6 +441,19 @@ fn launchd_daemon_uses_the_system_domain() {
             .iter()
             .any(|c| c.starts_with("launchctl bootstrap system "))
     );
+}
+
+#[test]
+fn systemd_status_explains_an_unreachable_instance() {
+    let rig = Rig::new();
+    let manager = rig.systemd(UID);
+    let spec = rig.spec(Role::Worker, Scope::User);
+    manager.install(&spec, &InstallOptions::default()).unwrap();
+    rig.fail(" show ", "Failed to connect to bus: No medium found");
+    assert!(matches!(
+        manager.status(&spec.id()),
+        Err(ServiceError::Unsupported(_))
+    ));
 }
 
 #[test]

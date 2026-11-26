@@ -33,9 +33,11 @@ pub(crate) fn unit_name(name: &str) -> String {
 
 pub(crate) fn render(spec: &ServiceSpec) -> Result<Rendered, ServiceError> {
     let paths = spec.validate(crate::Os::Linux)?;
-    if paths.executable.contains('$') {
+    // systemd refuses quotes and backslashes in a program path however they are
+    // escaped, and would expand `$` in it.
+    if paths.executable.contains(['"', '\'', '\\', '$']) {
         return Err(invalid(
-            "systemd cannot run a program whose path contains `$`",
+            "systemd cannot run a program whose path contains a quote, a backslash or `$`",
         ));
     }
     // systemd reads the rest of the line: surrounding blanks are dropped and a
@@ -58,9 +60,6 @@ pub(crate) fn render(spec: &ServiceSpec) -> Result<Rendered, ServiceError> {
             return Err(invalid(
                 "a system worker unit needs the account the worker runs as",
             ));
-        }
-        (_, Some(account)) if account.contains(char::is_whitespace) => {
-            return Err(invalid("a Linux account name cannot contain spaces"));
         }
         _ => {}
     }
