@@ -10,7 +10,7 @@ use std::fs;
 use std::io::{self, Cursor, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, mpsc};
 use std::time::{Duration, SystemTime};
 
 const HOUR: Duration = Duration::from_secs(60 * 60);
@@ -709,6 +709,44 @@ fn a46_putting_an_object_again_restarts_its_grace_period() {
     clock.advance(2 * HOUR);
     assert_eq!(store.gc(&|_| false, HOUR).unwrap().objects_removed, 1);
     assert!(!store.contains(&digest).unwrap());
+}
+
+#[test]
+fn a46_gc_waits_for_a_publish_in_progress_and_sees_its_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, clock) = manual_store(dir.path());
+    let content = noise(37, 20_000);
+    let digest = put_bytes(&store, &content).unwrap();
+    clock.advance(2 * HOUR);
+
+    let (asked_tx, asked_rx) = mpsc::channel();
+    // Stands for another writer that is inside its publish step.
+    let publishing = store.lock_shared().unwrap();
+    let report = std::thread::scope(|scope| {
+        let gc = scope.spawn(|| {
+            let is_live = |_: &Digest| {
+                asked_tx.send(()).unwrap();
+                false
+            };
+            store.gc(&is_live, HOUR).unwrap()
+        });
+        // The collector has found the object old and unreferenced. It
+        // cannot delete it while a publish is in progress, and by the time
+        // it may, this upload has refreshed the object.
+        asked_rx.recv().unwrap();
+        put_bytes(&store, &content).unwrap();
+        drop(publishing);
+        gc.join().unwrap()
+    });
+
+    assert_eq!(
+        report,
+        GcReport {
+            objects_in_grace: 1,
+            ..GcReport::default()
+        }
+    );
+    assert_eq!(get_bytes(&store, &digest).unwrap(), content);
 }
 
 #[test]

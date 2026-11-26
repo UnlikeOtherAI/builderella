@@ -465,7 +465,7 @@ impl FsStore {
         })
     }
 
-    fn lock_shared(&self) -> io::Result<SharedLock> {
+    pub(crate) fn lock_shared(&self) -> io::Result<SharedLock> {
         let file = File::open(&self.lock_path)?;
         retry_interrupted(|| file.lock_shared())?;
         Ok(SharedLock(file))
@@ -844,7 +844,7 @@ impl Read for Tee<'_> {
 }
 
 /// Shared hold on the publish lock, released on drop.
-struct SharedLock(File);
+pub(crate) struct SharedLock(File);
 
 impl Drop for SharedLock {
     fn drop(&mut self) {
