@@ -171,6 +171,11 @@ Common rules are in `AGENTS.md`. Each crate lists the acceptance scenarios
 * `gc(is_live, grace)` deletes unreferenced objects and stale temporaries
   older than `grace`, re-checking liveness immediately before each delete.
   `stats()` reports object count and bytes.
+* A re-put of a stored object reads its header only. `verify(digest)`
+  reads one object in full; `repair(digest, bytes)` and
+  `repair_compressed` replace a stored copy that fails it, and
+  `remove(digest)` deletes one object unconditionally. Both take the
+  publish lock the way `gc` does.
 * Covers: A31 (no temp collision), A36 (corrupt blob rejected), A46 (pinned
   objects survive GC).
 
