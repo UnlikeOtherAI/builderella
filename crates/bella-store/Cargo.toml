@@ -1,0 +1,20 @@
+[package]
+name = "bella-store"
+description = "Content-addressed object store on the local filesystem."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bella-core.workspace = true
+tracing.workspace = true
+# Builds the bundled zstd C source; no legacy formats or dictionary builder.
+zstd = { version = "0.14", default-features = false }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

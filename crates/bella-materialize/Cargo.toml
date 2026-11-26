@@ -1,0 +1,20 @@
+[package]
+name = "bella-materialize"
+description = "Materialize a snapshot manifest into a fresh directory."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bella-core.workspace = true
+thiserror.workspace = true
+# Same crate and version bella-core uses for its collision key.
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

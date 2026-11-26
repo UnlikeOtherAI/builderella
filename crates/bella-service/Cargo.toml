@@ -1,0 +1,22 @@
+[package]
+name = "bella-service"
+description = "Installs, inspects and runs the controller and worker as operating-system services."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bella-core.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-service = { version = "0.8", default-features = false }
+winreg = { version = "0.56", default-features = false }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

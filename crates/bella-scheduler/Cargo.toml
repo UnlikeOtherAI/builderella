@@ -1,0 +1,19 @@
+[package]
+name = "bella-scheduler"
+description = "Pure scheduling: eligibility, fairness, backfill, placement and explanations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bella-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+# Only to check that the scheduler and the worker's admission agree.
+bella-protect.workspace = true
+
+[lints]
+workspace = true
