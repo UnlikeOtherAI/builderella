@@ -6,6 +6,7 @@ use crate::model::RecipeFile;
 use crate::parse::MAIN_STEP;
 use crate::text::{self, closest, one_of};
 use crate::units::{format_bytes, format_cpus, format_duration_secs};
+use bella_core::api::ProjectPolicy;
 use bella_core::defaults;
 use bella_core::ids::Digest;
 use bella_core::job::{
@@ -14,7 +15,7 @@ use bella_core::job::{
 };
 use bella_core::platform::{Compatibility, PlacementChoice};
 use bella_core::resources::{ResourceEnvelope, ResourceVector};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// The `recipe` name of a job built by [`ad_hoc`]. It contains characters a
@@ -31,7 +32,11 @@ const DIGEST_FORMAT: u32 = 1;
 
 /// What one submission may change about a recipe. Everything else is fixed
 /// by the recipe file.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+///
+/// Deserializing accepts any subset of the fields and refuses unknown
+/// ones, so a misspelt override is an error rather than a silent no-op.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Overrides {
     /// Replaces the recipe's priority.
     pub priority: Option<Priority>,
@@ -56,7 +61,8 @@ pub struct Overrides {
 /// Limits only ever narrow a job: nothing in a recipe or in [`Overrides`]
 /// can raise one. `Default` is the cautious choice: no urgent priority and
 /// no paid capacity. `None` means "no limit of this kind".
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PolicyLimits {
     /// Longer job timeouts are lowered to this.
     pub max_timeout_secs: Option<u64>,
@@ -82,6 +88,19 @@ pub struct PolicyLimits {
 }
 
 impl PolicyLimits {
+    /// The limits a project's policy implies: whether `urgent` is allowed,
+    /// how much cloud use, and whether source must stay on the LAN. The
+    /// numeric limits, which belong to the fleet rather than the project,
+    /// are left unset.
+    pub fn for_project(policy: &ProjectPolicy) -> Self {
+        Self {
+            allow_urgent: policy.allow_urgent,
+            forced_lan_only: policy.source_lan_only,
+            cloud_ceiling: policy.cloud,
+            ..Self::default()
+        }
+    }
+
     /// No limits at all: for a local, single-user fleet and for tests.
     pub fn unrestricted() -> Self {
         Self {

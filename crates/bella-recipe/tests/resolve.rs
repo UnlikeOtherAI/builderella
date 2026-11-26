@@ -2,6 +2,7 @@
 
 mod common;
 
+use bella_core::api::ProjectPolicy;
 use bella_core::defaults;
 use bella_core::job::{
     CloudMode, CommandSpec, JobSpec, LeaseSpec, OutputSpec, Priority, RetryClass, StepKind,
@@ -483,6 +484,69 @@ fn cloud_use_is_lowered_to_the_ceiling() {
     let Resolved { spec, warnings } = resolved(APP, "test", &less, &ceiling(CloudMode::Manual));
     assert_eq!(spec.cloud, CloudMode::ExistingOnly);
     assert!(warnings.is_empty());
+}
+
+#[test]
+fn project_policy_becomes_limits() {
+    // A new project's policy is the cautious default.
+    let fresh = PolicyLimits::for_project(&ProjectPolicy::default());
+    assert_eq!(fresh, PolicyLimits::default());
+
+    let policy = ProjectPolicy {
+        cloud: CloudMode::Manual,
+        source_lan_only: true,
+        allow_urgent: true,
+        ..ProjectPolicy::default()
+    };
+    let limits = PolicyLimits::for_project(&policy);
+    let urgent = APP.replace("priority = \"interactive\"", "priority = \"urgent\"");
+    let Resolved { spec, warnings } = resolved(&urgent, "test", &none(), &limits);
+    assert_eq!(spec.priority, Priority::Urgent);
+    assert_eq!(spec.cloud, CloudMode::Manual);
+    assert!(spec.source_lan_only);
+    assert_eq!(warnings.len(), 1, "{}", render(&warnings));
+    warning_at(&warnings, "recipes.test.cloud");
+}
+
+#[test]
+fn overrides_and_limits_travel_as_json() {
+    let overrides: Overrides = serde_json::from_str(
+        r#"{ "priority": "interactive", "env": { "CI": "1" }, "timeout_secs": 600,
+             "placement": { "type": "prefer", "platform": { "os": "macos" } } }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        overrides,
+        Overrides {
+            priority: Some(Priority::Interactive),
+            env: env(&[("CI", "1")]),
+            timeout_secs: Some(600),
+            placement: Some(PlacementChoice::Prefer {
+                platform: PlatformSelector::os(Os::Macos),
+            }),
+            ..none()
+        }
+    );
+    assert_eq!(serde_json::from_str::<Overrides>("{}").unwrap(), none());
+    let json = serde_json::to_string(&overrides).unwrap();
+    assert_eq!(serde_json::from_str::<Overrides>(&json).unwrap(), overrides);
+    // A misspelt or unsupported override is refused, not dropped.
+    assert!(serde_json::from_str::<Overrides>(r#"{ "prority": "urgent" }"#).is_err());
+    assert!(serde_json::from_str::<Overrides>(r#"{ "max_attempts": 9 }"#).is_err());
+
+    let limits = PolicyLimits {
+        max_timeout_secs: Some(3600),
+        max_envelope: Some(ResourceVector::new(8000, 16 * GIB, 0).with_token("gpu", 1)),
+        cloud_ceiling: CloudMode::AutoOverflow,
+        ..PolicyLimits::default()
+    };
+    let json = serde_json::to_string(&limits).unwrap();
+    assert_eq!(serde_json::from_str::<PolicyLimits>(&json).unwrap(), limits);
+    // Absent limits are the cautious defaults.
+    assert_eq!(
+        serde_json::from_str::<PolicyLimits>("{}").unwrap(),
+        PolicyLimits::default()
+    );
 }
 
 #[test]
