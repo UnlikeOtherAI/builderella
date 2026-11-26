@@ -399,12 +399,11 @@ async fn a13_expired_or_rejected_offers_requeue_and_late_accepts_start_nothing()
 
     harness.advance(Duration::from_secs(16));
     worker.heartbeat().await;
-    let revoke = worker
+    worker
         .expect("the expiry's Revoke", |message| {
             revoke_for(message, &offer.attempt).then_some(())
         })
         .await;
-    let _ = revoke;
     let requeued = harness
         .job_until(&job.id, "the job back in the queue", |job| {
             job.phase == JobPhase::Queued
