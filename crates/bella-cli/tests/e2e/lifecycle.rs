@@ -97,8 +97,10 @@ fn a16_a_worker_killed_mid_job_releases_the_attempt_only_after_its_restart() {
     std::thread::sleep(Duration::from_secs(3));
     let job = fleet.job(&id);
     assert_ne!(job["phase"], "finished", "{job}");
-    let attempts = job["attempts"].as_array().unwrap();
-    assert_eq!(attempts.len(), 1);
+    // A busy machine may reject an offer before one is accepted; such an
+    // attempt never started. Exactly one attempt started, and it is held.
+    let attempts = started_attempts(&job);
+    assert_eq!(attempts.len(), 1, "{job}");
     assert!(attempts[0]["released_at"].is_null(), "{job}");
     let machine = fleet.fleet_view()["machines"][0].clone();
     assert_eq!(machine["reserved"], job["envelope"]["peak"], "{machine}");
@@ -107,7 +109,7 @@ fn a16_a_worker_killed_mid_job_releases_the_attempt_only_after_its_restart() {
     fleet.start_worker(0);
     let waited = fleet.bella(&["--json", "wait", &id, "--timeout", "2m"]);
     let job = waited.json()["job"].clone();
-    let attempts = job["attempts"].as_array().unwrap().clone();
+    let attempts = started_attempts(&job);
     assert_eq!(
         attempts[0]["outcome"]["type"], "infra_interrupted",
         "the first attempt was interrupted: {job}"
@@ -228,4 +230,16 @@ fn a21_ctrl_c_during_a_wait_stops_waiting_and_cancels_nothing() {
     let waited = fleet.bella(&["--json", "wait", &id, "--timeout", "1m"]);
     assert_eq!(waited.code, 0, "{}", waited.stderr);
     assert_eq!(waited.json()["job"]["outcome"]["type"], "succeeded");
+}
+
+/// The attempts of a job view that were started, oldest first. Offers a
+/// worker rejected also appear as attempts, but never start.
+fn started_attempts(job: &Value) -> Vec<Value> {
+    job["attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|attempt| attempt["start_committed"] == true)
+        .cloned()
+        .collect()
 }

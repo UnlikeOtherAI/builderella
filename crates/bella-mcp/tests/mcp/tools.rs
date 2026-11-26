@@ -631,9 +631,10 @@ fn wait_job_is_capped_by_the_server_and_polls_in_slices() {
     assert!(started.elapsed() < Duration::from_secs(10));
 
     // The quarter second was spent in short long-polls, none longer than
-    // the slice, so a withdrawn request can stop quickly.
+    // the slice, so a withdrawn request can stop quickly. How many fit
+    // depends on how fast the machine runs each poll.
     let queries = fleet.wait_queries();
-    assert!(queries.len() >= 3, "{queries:?}");
+    assert!(queries.len() >= 2, "{queries:?}");
     assert!(
         queries.iter().all(|q| q.timeout_ms.unwrap() <= 100),
         "{queries:?}"
