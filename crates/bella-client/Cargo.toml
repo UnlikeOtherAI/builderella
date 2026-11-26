@@ -9,10 +9,31 @@ repository.workspace = true
 
 [dependencies]
 bella-core.workspace = true
+bella-net.workspace = true
+bella-store.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+tempfile.workspace = true
+uuid.workspace = true
+bytes = "1"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+# TLS comes only from the pinned rustls configuration of `bella-net`, with
+# the `ring` provider. No feature here may enable `aws-lc-rs`, a platform
+# verifier, bundled web roots or `native-tls`: the `-no-provider` feature of
+# reqwest adds rustls and nothing else, and every client is built with
+# `use_preconfigured_tls`.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-manual-roots-no-provider", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+# Handshake and framing only; the TCP and TLS connection is made here, so
+# none of its TLS features are enabled.
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
 
 [dev-dependencies]
-tempfile.workspace = true
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "ws"] }
 
 [lints]
 workspace = true
