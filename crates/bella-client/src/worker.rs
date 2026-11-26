@@ -401,7 +401,15 @@ impl Driver {
                 () = self.in_tx.closed(), if reading => return Exit::ReaderGone,
                 frame = self.stream.next(), if reading => match frame {
                     None => return Exit::Closed,
-                    Some(Ok(message)) => self.received(message),
+                    // A function over the fields it changes: the permit of
+                    // the first branch keeps `self.in_tx` borrowed for the
+                    // whole `select!`.
+                    Some(Ok(message)) => received(
+                        message,
+                        &mut self.held,
+                        &mut self.awaiting_pong,
+                        &mut self.needs_flush,
+                    ),
                     Some(Err(WsError::ConnectionClosed | WsError::AlreadyClosed)) => {
                         return Exit::Closed;
                     }
@@ -448,28 +456,34 @@ impl Driver {
             }
         }
     }
+}
 
-    fn received(&mut self, message: Message) {
-        match message {
-            Message::Text(text) => {
-                self.held = Some(
-                    serde_json::from_str::<ControllerMsg>(text.as_str()).map_err(|e| {
-                        ClientError::decode(format!("a frame is not a controller message: {e}"))
-                    }),
-                );
-            }
-            Message::Binary(_) => {
-                self.held = Some(Err(ClientError::decode(
-                    "a binary frame arrived where a JSON text frame was expected",
-                )));
-            }
-            Message::Pong(_) => self.awaiting_pong = None,
-            // The WebSocket layer has queued the answer (a pong, or the
-            // closing frame); make sure it goes out even when nothing else
-            // is being written.
-            Message::Ping(_) | Message::Close(_) => self.needs_flush = true,
-            Message::Frame(_) => {}
+/// Acts on one frame from the controller.
+fn received(
+    message: Message,
+    held: &mut Option<Item>,
+    awaiting_pong: &mut Option<Instant>,
+    needs_flush: &mut bool,
+) {
+    match message {
+        Message::Text(text) => {
+            *held = Some(
+                serde_json::from_str::<ControllerMsg>(text.as_str()).map_err(|e| {
+                    ClientError::decode(format!("a frame is not a controller message: {e}"))
+                }),
+            );
         }
+        Message::Binary(_) => {
+            *held = Some(Err(ClientError::decode(
+                "a binary frame arrived where a JSON text frame was expected",
+            )));
+        }
+        Message::Pong(_) => *awaiting_pong = None,
+        // The WebSocket layer has queued the answer (a pong, or the closing
+        // frame); make sure it goes out even when nothing else is being
+        // written.
+        Message::Ping(_) | Message::Close(_) => *needs_flush = true,
+        Message::Frame(_) => {}
     }
 }
 
