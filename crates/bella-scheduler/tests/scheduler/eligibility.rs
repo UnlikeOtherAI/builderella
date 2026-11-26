@@ -809,11 +809,13 @@ fn effective_capacity_is_the_smaller_of_ceiling_and_budget() {
     assert_eq!(capacity.cpu_milli, 6000);
     assert_eq!(capacity.memory_bytes, 32 * GIB);
     assert_eq!(capacity.disk_bytes, 40 * GIB);
-    // Narrowed where the budget names the token, untouched where it is silent.
+    // Narrowed where the budget names the token. A worker's budget names
+    // every token it declares, so one it is silent about is not granted.
     assert_eq!(capacity.token("gpu"), 1);
-    assert_eq!(capacity.token("ios-simulator"), 4);
+    assert_eq!(capacity.token("ios-simulator"), 0);
     // A token the ceiling does not declare is never granted.
     assert_eq!(capacity.token("undeclared"), 0);
+    assert_eq!(capacity, ceiling.min(&budget));
 }
 
 #[test]

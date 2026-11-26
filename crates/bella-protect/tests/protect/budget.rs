@@ -179,6 +179,87 @@ fn token_budget_is_what_the_policy_declares_minus_what_is_held() {
     assert_eq!(budget.free.token("gpu"), 1);
 }
 
+/// The scheduler narrows each token by the reported budget and reads a
+/// missing one as zero, so the budget names every declared token at its
+/// declared count in every state of the host.
+#[test]
+fn budget_ceiling_always_carries_every_declared_token_at_its_declared_count() {
+    let declared = BTreeMap::from([("ios-simulator".to_string(), 2), ("gpu".to_string(), 1)]);
+    type Setup = fn(&mut Host);
+    let states: [(&str, Setup); 8] = [
+        ("quiet", |_| {}),
+        ("no telemetry", |h| h.telemetry = None),
+        ("paused", |h| h.control.paused = true),
+        ("draining", |h| h.control.draining = true),
+        ("builds disabled", |h| h.policy.accept_builds = false),
+        ("memory pressure", |h| {
+            h.set_pressure(PressureLevel::Critical);
+            h.set_available(GIB);
+        }),
+        ("an explicit cap on managed work", |h| {
+            h.policy.max_managed = Some(ResourceVector::new(2000, 4 * GIB, 50 * GIB));
+        }),
+        ("every token held", |h| {
+            let mut grant = offered(1, 1000, GIB);
+            grant.reserved = grant
+                .reserved
+                .with_token("ios-simulator", 2)
+                .with_token("gpu", 1);
+            h.grants.push(grant);
+        }),
+    ];
+    for (name, setup) in states {
+        let mut host = Host::shared_workstation();
+        host.policy.tokens = declared.clone();
+        setup(&mut host);
+        let budget = host.budget();
+        assert_eq!(budget.ceiling.tokens, declared, "{name}");
+        // Nothing but declared tokens is ever reported as free.
+        assert!(
+            budget
+                .free
+                .tokens
+                .keys()
+                .all(|token| declared.contains_key(token)),
+            "{name}: {:?}",
+            budget.free.tokens
+        );
+    }
+}
+
+/// The scenario `bella-scheduler` checks from its side: two simulators
+/// declared, one held.
+#[test]
+fn a_held_token_leaves_the_declared_count_minus_one() {
+    let mut host = Host::shared_workstation();
+    host.policy.tokens = BTreeMap::from([("ios-simulator".to_string(), 2)]);
+    let mut grant = offered(1, 1000, GIB);
+    grant.reserved = grant.reserved.with_token("ios-simulator", 1);
+    host.grants.push(grant);
+
+    let budget = host.budget();
+    assert_eq!(budget.ceiling.token("ios-simulator"), 2);
+    assert_eq!(budget.free.token("ios-simulator"), 1);
+
+    let simulators = |count: u64| request(1000, GIB).with_token("ios-simulator", count);
+    assert_eq!(host.admit(&simulators(1)), Ok(()));
+    let full = host.admit(&simulators(2)).unwrap_err();
+    assert_eq!(full.code, QueueReasonCode::WaitingForCapacity);
+    assert!(
+        full.message.contains("1 free (declared 2, reserved 1)"),
+        "{full}"
+    );
+    // More than the machine declares, or a token it does not declare, can
+    // never be granted here.
+    let never = host.admit(&simulators(3)).unwrap_err();
+    assert_eq!(never.code, QueueReasonCode::MachineTooSmall);
+    let undeclared = host
+        .admit(&request(1000, GIB).with_token("gpu", 1))
+        .unwrap_err();
+    assert_eq!(undeclared.code, QueueReasonCode::MachineTooSmall);
+    assert_eq!(budget.ceiling.token("gpu"), 0);
+}
+
 #[test]
 fn availability_rules() {
     struct Row {

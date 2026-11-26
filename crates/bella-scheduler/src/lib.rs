@@ -41,6 +41,14 @@
 //! whole simultaneous envelope, so a job is never placed where only part of
 //! it fits.
 //!
+//! Named tokens follow the same rule as CPU and memory, and it is the rule
+//! `bella-protect` applies on the worker: a machine grants a token up to
+//! the count its policy declares, minus what is reserved. The worker's
+//! budget always carries every declared token at its declared count, so a
+//! token the budget does not name is one the worker would refuse, and the
+//! scheduler grants none of it. `tests/scheduler/tokens.rs` runs one
+//! scenario through both crates and fails if their answers differ.
+//!
 //! # Order of service
 //!
 //! Jobs are considered one at a time. After each planned offer the working

@@ -380,9 +380,8 @@ fn check(seed: u64, state: &FleetState, plan: &Schedule) {
             "{ctx}: disk"
         );
         for (token, count) in &total.tokens {
-            let granted = budget.tokens.get(token).copied().unwrap_or(u64::MAX);
             assert!(
-                *count <= ceiling.token(token).min(granted),
+                *count <= ceiling.token(token).min(budget.token(token)),
                 "{ctx}: token {token}"
             );
         }
