@@ -1660,20 +1660,21 @@ fn environments(jobs: &[JobView]) -> Vec<EnvironmentView> {
     };
     let mut out = Vec::new();
 
-    // Ready; nobody has touched it for ten minutes, so the idle timeout is
-    // the nearest limit.
+    // Ready and in use two minutes ago, but last renewed 25 minutes ago:
+    // the renewable lease is the nearest limit.
     if let Some(mut e) = find("environment").and_then(|j| {
         environment(
             j,
             EnvironmentState::Ready,
-            lease(ago(41 * 60), ago(10 * 60), ahead(20 * 60)),
+            lease(ago(41 * 60), ago(2 * 60), ahead(5 * 60)),
         )
     }) {
         e.endpoints = endpoints("studio-1.fleet.example");
         out.push(e);
     }
 
-    // Starting; just created, so the renewable lease is the nearest limit.
+    // Starting; just created and not yet used, so the idle timeout (shorter
+    // than the lease) is the nearest limit.
     if let Some(e) = find("preparing").and_then(|j| {
         environment(
             j,
