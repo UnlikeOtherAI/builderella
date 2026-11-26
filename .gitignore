@@ -1,0 +1,13 @@
+/target/
+**/target/
+node_modules/
+dashboard/dist/
+.claude/
+.DS_Store
+*.swp
+/.bella/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+# Regenerated and committed when the first integration lands.
+Cargo.lock

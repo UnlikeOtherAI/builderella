@@ -1,0 +1,18 @@
+[package]
+name = "bella-contain"
+description = "Process containment adapters: cgroup v2, Job Objects, process groups."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bella-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

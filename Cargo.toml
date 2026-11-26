@@ -1,0 +1,58 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+repository = "https://github.com/UnlikeOtherAI/builderella"
+authors = ["UnlikeOtherAI"]
+
+[workspace.dependencies]
+# Internal crates
+bella-core = { path = "crates/bella-core" }
+bella-store = { path = "crates/bella-store" }
+bella-capture = { path = "crates/bella-capture" }
+bella-materialize = { path = "crates/bella-materialize" }
+bella-recipe = { path = "crates/bella-recipe" }
+bella-ledger = { path = "crates/bella-ledger" }
+bella-scheduler = { path = "crates/bella-scheduler" }
+bella-probe = { path = "crates/bella-probe" }
+bella-contain = { path = "crates/bella-contain" }
+bella-journal = { path = "crates/bella-journal" }
+bella-protect = { path = "crates/bella-protect" }
+bella-net = { path = "crates/bella-net" }
+bella-mcp = { path = "crates/bella-mcp" }
+bella-cloud = { path = "crates/bella-cloud" }
+
+# Shared third-party crates. Keep this list short; a crate that only one
+# member needs is declared in that member's own Cargo.toml.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+uuid = { version = "1", features = ["v7", "serde"] }
+sha2 = "0.11"
+hex = "0.4"
+tracing = "0.1"
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = "symbols"
+
+[profile.dev]
+debug = "line-tables-only"
