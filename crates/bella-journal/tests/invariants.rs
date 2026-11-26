@@ -116,7 +116,7 @@ fn check(journal: &Journal, models: &[Model], seed: u64, step: usize) {
     assert_eq!(held, from_records, "{context}");
     // Reading every attempt back is the slow part, so the second listing
     // is compared less often.
-    if step % 25 == 0 {
+    if step.is_multiple_of(25) {
         let active = journal.active_attempts().unwrap();
         let holding: Vec<_> = records
             .iter()

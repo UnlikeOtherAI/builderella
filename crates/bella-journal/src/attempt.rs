@@ -914,8 +914,9 @@ impl JournalTx<'_> {
                 attempt: attempt.attempt_id.clone(),
             });
         }
+        let event = self.append_event(attempt, AttemptEvent::Released { proof })?;
         self.write_state(&attempt.attempt_id, LocalAttemptState::Released, self.now)?;
-        self.append_event(attempt, AttemptEvent::Released { proof })
+        Ok(event)
     }
 
     fn records(&self, filter: &str, id: Option<&AttemptId>) -> Result<Vec<AttemptRecord>> {

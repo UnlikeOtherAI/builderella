@@ -8,10 +8,11 @@ pub type Result<T, E = JournalError> = std::result::Result<T, E>;
 
 /// Why a journal operation was refused or could not be carried out.
 ///
-/// The variants up to [`JournalError::NotRecovered`] are decisions: the
-/// journal looked at its state and said no, and it changed nothing. The
-/// rest are faults of the journal itself (storage, schema, corrupt rows).
-/// [`JournalError::reject_code`] tells the two groups apart.
+/// Two kinds of error share this type. A refusal means the journal looked
+/// at its state and said no, having changed nothing; it answers the command
+/// that asked, and [`JournalError::reject_code`] gives the protocol code for
+/// it. Everything else is a fault on this side (storage, schema, a corrupt
+/// row, a missing `recover`) and says nothing about the command.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum JournalError {
