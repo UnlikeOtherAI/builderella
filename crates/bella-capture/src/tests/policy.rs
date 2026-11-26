@@ -53,7 +53,10 @@ fn a33_untracked_secret_is_excluded_and_reported() {
     assert_eq!(store.len(), 5);
 
     // Explicitly allowed paths are captured and no longer reported.
-    let policy = with(|p| p.allow_secrets = vec![".env".into(), "keys".into()]);
+    let policy = with(|p| {
+        p.allow_secrets
+            .extend([".env".to_string(), "keys".to_string()])
+    });
     let allowed = snap(&repo.dir, &policy, &store).unwrap();
     assert_eq!(content(&store, &allowed, ".env"), b"TOKEN=1");
     assert_eq!(
