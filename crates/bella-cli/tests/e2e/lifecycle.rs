@@ -62,7 +62,9 @@ fn a11_cancel_of_a_running_job_ends_after_the_workers_cleanup() {
     assert_eq!(job["phase"], "finished");
     assert_eq!(job["outcome"]["type"], "cancelled");
     assert_eq!(job["cleanup"], "released");
-    let attempt = &job["attempts"][0];
+    // The newest attempt is the one that ran; an earlier one may be an
+    // offer the worker rejected.
+    let attempt = job["attempts"].as_array().unwrap().last().unwrap();
     assert_eq!(attempt["cleanup"], "released");
     assert!(attempt["released_at"].is_number());
 

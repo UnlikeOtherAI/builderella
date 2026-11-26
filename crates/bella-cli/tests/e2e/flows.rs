@@ -58,8 +58,11 @@ fn submit_wait_follow_downloads_the_artifact_and_releases_the_job() {
     assert_eq!(job["phase"], "finished");
     assert_eq!(job["outcome"]["type"], "succeeded");
     assert_eq!(job["cleanup"], "released");
+    // The last attempt is the one that ran: a worker may reject an offer
+    // first (for example while its telemetry settles), which adds an
+    // attempt that never started.
     assert!(
-        job["attempts"][0]["released_at"].is_number(),
+        last_attempt(&job)["released_at"].is_number(),
         "the attempt was released: {job}"
     );
 
@@ -284,7 +287,7 @@ fn a19_a_service_and_its_test_run_together_under_their_combined_reservation() {
     assert_eq!(job["envelope"]["peak"]["cpu_milli"], 750);
     assert!(run.stderr.contains("service-ready"), "{}", run.stderr);
     assert!(run.stderr.contains("tests-ran"), "{}", run.stderr);
-    let steps = job["attempts"][0]["steps"].as_array().unwrap();
+    let steps = last_attempt(&job)["steps"].as_array().unwrap();
     let state = |name: &str| {
         steps
             .iter()
@@ -294,4 +297,13 @@ fn a19_a_service_and_its_test_run_together_under_their_combined_reservation() {
     };
     assert_eq!(state("tests"), "succeeded", "{job}");
     assert_ne!(state("svc"), "failed", "{job}");
+}
+
+/// The newest attempt of a job view; earlier ones may be offers the worker
+/// rejected before anything started.
+fn last_attempt(job: &Value) -> &Value {
+    job["attempts"]
+        .as_array()
+        .and_then(|attempts| attempts.last())
+        .expect("the job has an attempt")
 }
