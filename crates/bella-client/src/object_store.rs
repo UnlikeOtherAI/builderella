@@ -293,7 +293,10 @@ impl HttpObjectStore {
                 return Err(store_error(error, Some(digest)));
             };
             tracing::debug!(%error, %digest, "repeating an object download");
-            self.handle.block_on(tokio::time::sleep(delay));
+            // The timer has to be created inside the runtime, which this
+            // thread is not part of.
+            self.handle
+                .block_on(async move { tokio::time::sleep(delay).await });
             sink.reset()?;
         }
     }
