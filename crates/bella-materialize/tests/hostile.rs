@@ -440,3 +440,51 @@ fn a36_the_reported_error_does_not_depend_on_the_thread_count() {
         }
     }
 }
+
+#[test]
+fn a36_directories_implied_by_deep_paths_count_against_the_limit() {
+    let mut snap = Snap::default();
+    // One entry, six objects on disk: five directories and the file.
+    snap.file("a/b/c/d/e/f", b"deep");
+    let manifest = snap.manifest();
+    let tmp = tempfile::tempdir().unwrap();
+    let dest = tmp.path().join("deep");
+    let limit = |max_files| MaterializeOptions {
+        max_files,
+        ..options()
+    };
+
+    let error = materialize(&manifest, &snap.store, &dest, &limit(5)).unwrap_err();
+    assert!(
+        matches!(error, MaterializeError::TooManyEntries { limit: 5, .. }),
+        "{error}"
+    );
+    assert!(!dest.exists());
+
+    let report = materialize(&manifest, &snap.store, &dest, &limit(6)).unwrap();
+    assert_eq!((report.files, report.dirs), (1, 5));
+}
+
+#[test]
+fn a36_entangled_symlinks_are_refused_instead_of_resolved_forever() {
+    let mut snap = Snap::default();
+    snap.file("b/f", b"f");
+    // `l0` wanders in and out of `b`; every other link goes through `l0`
+    // until the hop limit, which costs thousands of steps per link.
+    snap.link("l0", &format!("{}b", "b/../".repeat(50)));
+    let through_l0 = format!("{}l0", "l0/../".repeat(42));
+    for index in 1..=400 {
+        snap.link(&format!("l{index}"), &through_l0);
+    }
+    let manifest = snap.manifest();
+    assert!(manifest.validate().is_ok());
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dest = tmp.path().join("links");
+    let error = materialize(&manifest, &snap.store, &dest, &options()).unwrap_err();
+    assert!(
+        matches!(&error, MaterializeError::SymlinksTooComplex { path } if path.starts_with('l')),
+        "{error}"
+    );
+    assert!(!dest.exists());
+}

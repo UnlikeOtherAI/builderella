@@ -16,6 +16,13 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
+/// Most threads a call will use, whatever the options ask for.
+const MAX_THREADS: usize = 64;
+/// Steps granted for resolving all symlinks of a manifest, plus
+/// [`LINK_STEPS_PER_NODE`] per tree node. An ordinary link takes one step
+/// per component of its target.
+const LINK_STEPS_BASE: u64 = 1_000_000;
+const LINK_STEPS_PER_NODE: u64 = 64;
 
 /// Limits and parallelism for one [`materialize`] call.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,11 +31,13 @@ pub struct MaterializeOptions {
     /// against the manifest before anything is created; since no file is
     /// ever written past its declared size, it also bounds the bytes on disk.
     pub max_total_bytes: u64,
-    /// Largest number of manifest entries. Files, symlinks and explicit
-    /// directories all count, because each one costs an inode.
+    /// Largest number of filesystem objects the tree may hold. Files,
+    /// symlinks and directories all count, including directories that are
+    /// only implied by a path, because each one costs an inode.
     pub max_files: u64,
-    /// Threads used to write files. 0 and 1 both mean the calling thread
-    /// only. The resulting tree, report and error do not depend on it.
+    /// Threads used to write files, at most 64. 0 and 1 both mean the
+    /// calling thread only. The resulting tree, report and error do not
+    /// depend on it.
     pub threads: usize,
 }
 
@@ -67,16 +76,19 @@ struct PlannedLink<'a> {
 /// `store`.
 ///
 /// `dest` must not exist, or be an empty real directory; missing parents are
-/// created. Each root is placed at `dest/<mount>` (`.` is `dest` itself).
+/// created and stay if the call fails. Each root is placed at `dest/<mount>`
+/// (`.` is `dest` itself).
 ///
 /// Guarantees:
 ///
-/// * The manifest is validated first; an invalid one writes nothing.
+/// * The manifest is validated first; an invalid one writes nothing. The
+///   limits in `options` are checked next, against what the manifest
+///   declares.
 /// * Nothing is created outside `dest`. Directories are made first, files
 ///   are created with `create_new` (never truncating or following an
 ///   existing entry) and symlinks come last. A manifest in which a path
 ///   passes through one of its own symlinks, or whose links resolve outside
-///   their root, is refused.
+///   their root when followed through each other, is refused.
 /// * A file's object is read no further than one byte past its declared
 ///   size and is hashed as it is written. A missing object, a digest
 ///   mismatch and an object longer or shorter than declared are errors.
@@ -110,11 +122,30 @@ pub fn materialize(
     manifest.validate()?;
     check_limits(manifest, options)?;
 
-    let tree = Tree::build(manifest)?;
+    // Names and lengths first: this pass is linear in the manifest and
+    // bounds every path before anything is built from them.
+    let os = current_os();
+    let absolute = std::path::absolute(dest).map_err(|source| MaterializeError::Io {
+        op: "resolve",
+        path: dest.to_path_buf(),
+        source,
+    })?;
+    let problems = name_and_length_problems(manifest, os, base_len(&absolute));
+    if !problems.is_empty() {
+        return Err(MaterializeError::Incompatible(problems));
+    }
+
+    let tree = Tree::build(manifest, options.max_files)?;
+    let mut link_steps =
+        LINK_STEPS_BASE.saturating_add(LINK_STEPS_PER_NODE.saturating_mul(tree.nodes.len() as u64));
     let mut dirs: Vec<&str> = Vec::new();
     let mut files: Vec<PlannedFile<'_>> = Vec::new();
     let mut links: Vec<PlannedLink<'_>> = Vec::new();
     for (rel, node) in &tree.nodes {
+        // Every path the tree needs must be made of plain names here.
+        if join_rel(dest, rel).is_none() {
+            return Err(MaterializeError::UnsafePath { path: rel.clone() });
+        }
         match *node {
             Node::Dir => dirs.push(rel),
             Node::File {
@@ -128,12 +159,18 @@ pub fn materialize(
                 executable,
             }),
             Node::Link { target, .. } => {
-                let resolved = tree.resolve_link(rel);
-                if resolved == Resolved::Escapes {
-                    return Err(MaterializeError::SymlinkEscapes {
-                        path: rel.clone(),
-                        target: target.to_string(),
-                    });
+                let resolved = tree.resolve_link(rel, &mut link_steps);
+                match resolved {
+                    Resolved::Escapes => {
+                        return Err(MaterializeError::SymlinkEscapes {
+                            path: rel.clone(),
+                            target: target.to_string(),
+                        });
+                    }
+                    Resolved::OutOfBudget => {
+                        return Err(MaterializeError::SymlinksTooComplex { path: rel.clone() });
+                    }
+                    Resolved::Dir | Resolved::File | Resolved::Missing | Resolved::Loop => {}
                 }
                 links.push(PlannedLink {
                     rel,
@@ -144,22 +181,9 @@ pub fn materialize(
         }
     }
 
-    let os = current_os();
-    let absolute = std::path::absolute(dest).map_err(|source| MaterializeError::Io {
-        op: "resolve",
-        path: dest.to_path_buf(),
-        source,
-    })?;
-    let mut problems = name_and_length_problems(manifest, os, base_len(&absolute));
-    problems.extend(collision_problems(manifest, os, true));
-    if !problems.is_empty() {
-        return Err(MaterializeError::Incompatible(problems));
-    }
-    // Every path the tree needs must be made of plain names here.
-    for rel in tree.nodes.keys() {
-        if join_rel(dest, rel).is_none() {
-            return Err(MaterializeError::UnsafePath { path: rel.clone() });
-        }
+    let collisions = collision_problems(manifest, os, true);
+    if !collisions.is_empty() {
+        return Err(MaterializeError::Incompatible(collisions));
     }
 
     let created_dest = prepare_destination(dest)?;
@@ -418,7 +442,7 @@ fn write_files(
         }
     };
 
-    let workers = threads.clamp(1, files.len().max(1));
+    let workers = threads.clamp(1, files.len().clamp(1, MAX_THREADS));
     if workers == 1 {
         work();
     } else {
@@ -563,4 +587,36 @@ fn finish_file(file: &File, executable: bool) -> io::Result<()> {
 #[cfg(not(unix))]
 fn finish_file(_file: &File, _executable: bool) -> io::Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a29_only_a_missing_capability_counts_as_symlinks_unsupported() {
+        assert!(symlinks_unavailable(&io::Error::from(
+            io::ErrorKind::Unsupported
+        )));
+        for ordinary in [
+            io::ErrorKind::AlreadyExists,
+            io::ErrorKind::NotFound,
+            io::ErrorKind::StorageFull,
+        ] {
+            assert!(!symlinks_unavailable(&io::Error::from(ordinary)));
+        }
+        if cfg!(windows) {
+            // ERROR_PRIVILEGE_NOT_HELD: no symlink privilege and no Developer Mode.
+            assert!(symlinks_unavailable(&io::Error::from_raw_os_error(1314)));
+            // ERROR_ALREADY_EXISTS and ERROR_DISK_FULL are ordinary failures.
+            assert!(!symlinks_unavailable(&io::Error::from_raw_os_error(183)));
+            assert!(!symlinks_unavailable(&io::Error::from_raw_os_error(112)));
+        } else {
+            // EPERM is the filesystem saying it has no symlinks; EACCES and
+            // EEXIST are ordinary failures.
+            assert!(symlinks_unavailable(&io::Error::from_raw_os_error(1)));
+            assert!(!symlinks_unavailable(&io::Error::from_raw_os_error(13)));
+            assert!(!symlinks_unavailable(&io::Error::from_raw_os_error(17)));
+        }
+    }
 }

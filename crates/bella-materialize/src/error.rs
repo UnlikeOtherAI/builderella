@@ -29,9 +29,11 @@ pub enum MaterializeError {
     #[error("destination `{}` exists and is not a directory", .dest.display())]
     DestinationNotDirectory { dest: PathBuf },
 
-    /// The manifest has more entries (files, symlinks and directories) than
-    /// `MaterializeOptions::max_files` allows.
-    #[error("manifest has {entries} entries, above the limit of {limit}")]
+    /// The tree would hold more filesystem objects than
+    /// `MaterializeOptions::max_files` allows. Every manifest entry counts,
+    /// and so does every directory a path implies. `entries` is the number
+    /// counted when the limit was passed; counting stops there.
+    #[error("the tree needs {entries} or more files, links and directories, the limit is {limit}")]
     TooManyEntries { entries: u64, limit: u64 },
 
     /// The declared file sizes add up to more than
@@ -52,6 +54,11 @@ pub enum MaterializeError {
     /// leaves the source root it belongs to.
     #[error("symlink `{path}` -> `{target}` resolves outside its source root")]
     SymlinkEscapes { path: String, target: String },
+
+    /// The manifest's symlinks point through each other so heavily that
+    /// working out where they lead was abandoned at `path`.
+    #[error("the symlinks of the manifest are too entangled to resolve (stopped at `{path}`)")]
+    SymlinksTooComplex { path: String },
 
     /// A path component is not a plain file name on this platform.
     #[error("`{path}` is not a plain relative path on this platform")]

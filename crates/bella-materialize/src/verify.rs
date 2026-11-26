@@ -1,6 +1,7 @@
 //! Comparing a directory with the manifest it should hold.
 
 use crate::plan::{Node, Tree};
+use crate::platform::{Incompatibility, current_os, name_and_length_problems};
 use bella_core::ids::{Digest, DigestWriter};
 use bella_core::snapshot::Manifest;
 use std::collections::BTreeSet;
@@ -25,8 +26,9 @@ pub enum EntryKind {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum TreeMismatch {
-    /// The manifest does not pass validation, so there is nothing to compare
-    /// against. Reported alone.
+    /// The manifest does not pass validation, or holds a path too long to
+    /// exist on this platform, so there is nothing to compare against.
+    /// Reported alone.
     #[error("invalid manifest: {reason}")]
     InvalidManifest { reason: String },
 
@@ -108,13 +110,28 @@ impl TreeMismatch {
 /// Windows the executable bit is not checked and `\` in a stored link target
 /// is read as `/`.
 ///
-/// Mismatches are returned sorted by path.
+/// Mismatches are returned sorted by path. Meant for manifests that
+/// [`materialize`](crate::materialize) accepted: memory grows with the number
+/// of entries and the directories their paths imply.
 pub fn verify_tree(manifest: &Manifest, dest: &Path) -> Result<(), Vec<TreeMismatch>> {
     let invalid = |reason: String| vec![TreeMismatch::InvalidManifest { reason }];
     manifest
         .validate()
         .map_err(|error| invalid(error.to_string()))?;
-    let tree = Tree::build(manifest).map_err(|error| invalid(error.to_string()))?;
+    // A path too long to exist here cannot be in the tree, and refusing it
+    // keeps the work below proportional to the manifest.
+    if let Some(too_long) = name_and_length_problems(manifest, current_os(), 0)
+        .into_iter()
+        .find(|problem| {
+            matches!(
+                problem,
+                Incompatibility::PathTooLong { .. } | Incompatibility::NameTooLong { .. }
+            )
+        })
+    {
+        return Err(invalid(too_long.to_string()));
+    }
+    let tree = Tree::build(manifest, u64::MAX).map_err(|error| invalid(error.to_string()))?;
 
     match fs::symlink_metadata(dest) {
         Ok(metadata) if metadata.file_type().is_dir() => {}

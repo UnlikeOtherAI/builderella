@@ -7,7 +7,7 @@
 use crate::error::MaterializeError;
 use bella_core::ids::Digest;
 use bella_core::snapshot::{Entry, Manifest};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::ops::Bound;
 use std::path::{Component, Path, PathBuf};
@@ -43,6 +43,8 @@ pub(crate) enum Resolved {
     Escapes,
     /// Passes through more than [`MAX_LINK_HOPS`] links.
     Loop,
+    /// The step budget ran out before the answer was known.
+    OutOfBudget,
 }
 
 /// Destination-relative path (`/`-separated) to what must exist there.
@@ -58,19 +60,22 @@ impl<'a> Tree<'a> {
     ///
     /// `Manifest::validate` already rejects those within one root; this is
     /// the independent check at the point where paths become writes.
-    pub(crate) fn build(manifest: &'a Manifest) -> Result<Self, MaterializeError> {
+    ///
+    /// `max_nodes` bounds the entries plus the directories their paths
+    /// imply, so a few deep paths cannot ask for millions of directories.
+    pub(crate) fn build(manifest: &'a Manifest, max_nodes: u64) -> Result<Self, MaterializeError> {
         let mut nodes: BTreeMap<String, Node<'a>> = BTreeMap::new();
         for root in &manifest.roots {
             let (prefix, floor) = if root.mount == "." {
                 (String::new(), 0)
             } else {
-                add_ancestors(&mut nodes, &root.mount)?;
-                add_node(&mut nodes, root.mount.clone(), Node::Dir)?;
+                add_ancestors(&mut nodes, &root.mount, max_nodes)?;
+                add_node(&mut nodes, root.mount.clone(), Node::Dir, max_nodes)?;
                 (format!("{}/", root.mount), root.mount.split('/').count())
             };
             for entry in &root.entries {
                 let full = format!("{prefix}{}", entry.path());
-                add_ancestors(&mut nodes, &full)?;
+                add_ancestors(&mut nodes, &full, max_nodes)?;
                 let node = match entry {
                     Entry::File {
                         digest,
@@ -85,7 +90,7 @@ impl<'a> Tree<'a> {
                     Entry::Symlink { target, .. } => Node::Link { target, floor },
                     Entry::Dir { .. } => Node::Dir,
                 };
-                add_node(&mut nodes, full, node)?;
+                add_node(&mut nodes, full, node, max_nodes)?;
             }
         }
         Ok(Self { nodes })
@@ -93,31 +98,60 @@ impl<'a> Tree<'a> {
 
     /// Resolve the symlink at `link` the way a path lookup would, using only
     /// the manifest's own entries.
-    pub(crate) fn resolve_link(&self, link: &str) -> Resolved {
+    ///
+    /// Every path component looked at takes one step from `budget`, which
+    /// callers share across all links of a manifest so that a small manifest
+    /// of links pointing through each other cannot buy unbounded work.
+    pub(crate) fn resolve_link(&self, link: &str, budget: &mut u64) -> Resolved {
         let Some(Node::Link { target, floor }) = self.nodes.get(link) else {
             return Resolved::Missing;
         };
         let floor = *floor;
-        let mut current: Vec<&str> = link.split('/').collect();
-        current.pop();
-        let mut pending: VecDeque<&str> = target.split('/').collect();
+        // The directory being looked in, as a key of `nodes`; empty for the
+        // destination itself. `depth` is its number of components.
+        let mut current = match link.rfind('/') {
+            Some(index) => link[..index].to_string(),
+            None => String::new(),
+        };
+        let mut depth = current.split('/').filter(|part| !part.is_empty()).count();
+        // Components still to walk; a link met on the way puts its own
+        // target on top.
+        let mut pending = vec![target.split('/')];
         let mut hops = 0;
-        while let Some(component) = pending.pop_front() {
+        loop {
+            let Some(components) = pending.last_mut() else {
+                return Resolved::Dir;
+            };
+            let Some(component) = components.next() else {
+                pending.pop();
+                continue;
+            };
+            if *budget == 0 {
+                return Resolved::OutOfBudget;
+            }
+            *budget -= 1;
             match component {
                 "" | "." => {}
                 ".." => {
-                    if current.len() <= floor {
+                    if depth <= floor {
                         return Resolved::Escapes;
                     }
-                    current.pop();
+                    current.truncate(current.rfind('/').unwrap_or(0));
+                    depth -= 1;
                 }
                 name => {
-                    current.push(name);
-                    match self.nodes.get(&current.join("/")) {
+                    let parent_len = current.len();
+                    if !current.is_empty() {
+                        current.push('/');
+                    }
+                    current.push_str(name);
+                    match self.nodes.get(current.as_str()) {
                         None => return Resolved::Missing,
-                        Some(Node::Dir) => {}
+                        Some(Node::Dir) => depth += 1,
                         Some(Node::File { .. }) => {
-                            let ends_here = pending.iter().all(|c| matches!(*c, "" | "."));
+                            let ends_here = pending
+                                .iter()
+                                .all(|rest| rest.clone().all(|part| matches!(part, "" | ".")));
                             return if ends_here {
                                 Resolved::File
                             } else {
@@ -129,17 +163,24 @@ impl<'a> Tree<'a> {
                             if hops > MAX_LINK_HOPS {
                                 return Resolved::Loop;
                             }
-                            current.pop();
-                            for part in target.split('/').rev() {
-                                pending.push_front(part);
-                            }
+                            current.truncate(parent_len);
+                            pending.push(target.split('/'));
                         }
                     }
                 }
             }
         }
-        Resolved::Dir
     }
+}
+
+fn check_room(nodes: &BTreeMap<String, Node<'_>>, max_nodes: u64) -> Result<(), MaterializeError> {
+    if nodes.len() as u64 >= max_nodes {
+        return Err(MaterializeError::TooManyEntries {
+            entries: max_nodes.saturating_add(1),
+            limit: max_nodes,
+        });
+    }
+    Ok(())
 }
 
 /// Make every proper ancestor of `path` a directory, or fail when one of
@@ -147,6 +188,7 @@ impl<'a> Tree<'a> {
 fn add_ancestors<'a>(
     nodes: &mut BTreeMap<String, Node<'a>>,
     path: &str,
+    max_nodes: u64,
 ) -> Result<(), MaterializeError> {
     for (index, _) in path.match_indices('/') {
         let ancestor = &path[..index];
@@ -165,6 +207,7 @@ fn add_ancestors<'a>(
                 });
             }
             None => {
+                check_room(nodes, max_nodes)?;
                 nodes.insert(ancestor.to_string(), Node::Dir);
             }
         }
@@ -176,9 +219,11 @@ fn add_node<'a>(
     nodes: &mut BTreeMap<String, Node<'a>>,
     path: String,
     node: Node<'a>,
+    max_nodes: u64,
 ) -> Result<(), MaterializeError> {
     match nodes.get(&path) {
         None => {
+            check_room(nodes, max_nodes)?;
             nodes.insert(path, node);
             Ok(())
         }
@@ -265,16 +310,20 @@ mod tests {
         }
     }
 
+    fn resolve(tree: &Tree<'_>, link: &str) -> Resolved {
+        tree.resolve_link(link, &mut 10_000)
+    }
+
     #[test]
     fn a36_file_below_a_symlink_entry_is_refused_in_either_order() {
         let link_first = raw(vec![(".", vec![link("out", "elsewhere"), file("out/x")])]);
         assert!(matches!(
-            Tree::build(&link_first),
+            Tree::build(&link_first, u64::MAX),
             Err(MaterializeError::LinkInPath { path, link }) if path == "out/x" && link == "out"
         ));
         let file_first = raw(vec![(".", vec![file("out/x"), link("out", "elsewhere")])]);
         assert!(matches!(
-            Tree::build(&file_first),
+            Tree::build(&file_first, u64::MAX),
             Err(MaterializeError::LinkInPath { path, link }) if path == "out/x" && link == "out"
         ));
     }
@@ -287,7 +336,7 @@ mod tests {
             ("libs/shared", vec![file("x")]),
         ]);
         assert!(matches!(
-            Tree::build(&m),
+            Tree::build(&m, u64::MAX),
             Err(MaterializeError::LinkInPath { .. } | MaterializeError::Conflict { .. })
         ));
     }
@@ -296,17 +345,17 @@ mod tests {
     fn file_used_as_directory_and_duplicates_conflict() {
         let m = raw(vec![(".", vec![file("a"), file("a/b")])]);
         assert!(matches!(
-            Tree::build(&m),
+            Tree::build(&m, u64::MAX),
             Err(MaterializeError::Conflict { path, with }) if path == "a/b" && with == "a"
         ));
         let m = raw(vec![(".", vec![file("a/b"), file("a")])]);
         assert!(matches!(
-            Tree::build(&m),
+            Tree::build(&m, u64::MAX),
             Err(MaterializeError::Conflict { path, with }) if path == "a/b" && with == "a"
         ));
         let m = raw(vec![(".", vec![file("a"), file("a")])]);
         assert!(matches!(
-            Tree::build(&m),
+            Tree::build(&m, u64::MAX),
             Err(MaterializeError::Conflict { .. })
         ));
     }
@@ -322,7 +371,7 @@ mod tests {
                 }],
             ),
         ]);
-        let tree = Tree::build(&m).unwrap();
+        let tree = Tree::build(&m, u64::MAX).unwrap();
         let dirs: Vec<&str> = tree
             .nodes
             .iter()
@@ -358,17 +407,17 @@ mod tests {
                 link("root", "a/.."),
             ],
         )]);
-        let tree = Tree::build(&m).unwrap();
-        assert_eq!(tree.resolve_link("to_file"), Resolved::File);
-        assert_eq!(tree.resolve_link("to_dir"), Resolved::Dir);
-        assert_eq!(tree.resolve_link("to_dir_slash"), Resolved::Dir);
-        assert_eq!(tree.resolve_link("via_link"), Resolved::File);
-        assert_eq!(tree.resolve_link("dangling"), Resolved::Missing);
-        assert_eq!(tree.resolve_link("through_file"), Resolved::Missing);
-        assert_eq!(tree.resolve_link("a/b/up2"), Resolved::Dir);
-        assert_eq!(tree.resolve_link("escape_chain"), Resolved::Escapes);
-        assert_eq!(tree.resolve_link("loop_a"), Resolved::Loop);
-        assert_eq!(tree.resolve_link("root"), Resolved::Dir);
+        let tree = Tree::build(&m, u64::MAX).unwrap();
+        assert_eq!(resolve(&tree, "to_file"), Resolved::File);
+        assert_eq!(resolve(&tree, "to_dir"), Resolved::Dir);
+        assert_eq!(resolve(&tree, "to_dir_slash"), Resolved::Dir);
+        assert_eq!(resolve(&tree, "via_link"), Resolved::File);
+        assert_eq!(resolve(&tree, "dangling"), Resolved::Missing);
+        assert_eq!(resolve(&tree, "through_file"), Resolved::Missing);
+        assert_eq!(resolve(&tree, "a/b/up2"), Resolved::Dir);
+        assert_eq!(resolve(&tree, "escape_chain"), Resolved::Escapes);
+        assert_eq!(resolve(&tree, "loop_a"), Resolved::Loop);
+        assert_eq!(resolve(&tree, "root"), Resolved::Dir);
     }
 
     #[test]
@@ -379,14 +428,51 @@ mod tests {
         ]);
         // `Manifest::validate` rejects this target lexically; the resolver
         // must reach the same answer on its own.
-        let tree = Tree::build(&m).unwrap();
-        assert_eq!(tree.resolve_link("app/up"), Resolved::Missing);
+        let tree = Tree::build(&m, u64::MAX).unwrap();
+        assert_eq!(resolve(&tree, "app/up"), Resolved::Missing);
         let m = raw(vec![
             ("app", vec![file("sub/x"), link("up", "sub/../..")]),
             ("lib", vec![file("y")]),
         ]);
-        let tree = Tree::build(&m).unwrap();
-        assert_eq!(tree.resolve_link("app/up"), Resolved::Escapes);
+        let tree = Tree::build(&m, u64::MAX).unwrap();
+        assert_eq!(resolve(&tree, "app/up"), Resolved::Escapes);
+    }
+
+    #[test]
+    fn a36_implied_directories_count_against_the_node_limit() {
+        let m = raw(vec![(".", vec![file("a/b/c/d/e/f")])]);
+        assert!(Tree::build(&m, 6).is_ok());
+        assert!(matches!(
+            Tree::build(&m, 5),
+            Err(MaterializeError::TooManyEntries { limit: 5, .. })
+        ));
+        let m = raw(vec![("m/n", vec![file("f")])]);
+        assert!(Tree::build(&m, 3).is_ok());
+        assert!(matches!(
+            Tree::build(&m, 2),
+            Err(MaterializeError::TooManyEntries { limit: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn a36_link_resolution_stops_when_its_budget_is_spent() {
+        // 30 links, each going through the previous one twice.
+        let mut entries = vec![file("base/f")];
+        entries.push(link("l00", "base"));
+        for index in 1..30 {
+            entries.push(link(
+                &format!("l{index:02}"),
+                &format!("l{:02}/../l{:02}", index - 1, index - 1),
+            ));
+        }
+        let m = raw(vec![(".", entries)]);
+        let tree = Tree::build(&m, u64::MAX).unwrap();
+        let mut budget = 50;
+        assert_eq!(tree.resolve_link("l29", &mut budget), Resolved::OutOfBudget);
+        assert_eq!(budget, 0);
+        let mut budget = 50;
+        assert_eq!(tree.resolve_link("l02", &mut budget), Resolved::Dir);
+        assert!(budget < 50);
     }
 
     #[test]
