@@ -112,6 +112,10 @@ without a recipe.
 | `cwd` | string | source root | Working directory for the steps, relative to the root of the snapshot. It must stay inside it: no `..`, no absolute path. |
 | `env` | table of strings | none | Environment variables for every step. Values are strings, so write `PORT = "8080"`. |
 
+Steps do not inherit the worker's environment. They start with the system
+essentials and Builderella's own `BELLA_*` variables, then get the recipe's
+`env` and the step's. Anything else the build needs has to be set in `env`.
+
 A command is written in one of two ways:
 
 * A **string** is a script run by a shell: `sh -c` on Linux and macOS,
