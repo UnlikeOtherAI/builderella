@@ -312,8 +312,9 @@ impl FsStore {
     /// asked again immediately before each delete, together with a fresh
     /// look at the object's age, while holding the store's publish lock
     /// exclusively. A `put` that returns therefore leaves its object safe
-    /// from every collector on this root for `grace`, which is the time the
-    /// caller has to make `is_live` return true for it.
+    /// from every collector on this root until `grace` after the moment it
+    /// published or refreshed the object, which is just before it returned.
+    /// That is the time the caller has to make `is_live` return true.
     ///
     /// Temporary files (`tmp/*.tmp`) not written to for `grace` are deleted.
     /// `grace` must be longer than the longest stall of an upload in
@@ -550,16 +551,20 @@ impl FsStore {
     /// if that object is already published.
     fn publish(&self, mut temp: TempFile, digest: &Digest, len: u64) -> Result<(), StoreError> {
         let dst = self.object_path(digest);
-        let file = temp.file_mut()?;
-        // The modification time is the publication time by the store's own
-        // clock; gc measures age from it.
-        file.set_modified(self.now())?;
-        file.sync_all()?;
-        temp.close();
+        temp.file_mut()?.sync_all()?;
 
         let renamed = {
             let _lock = self.lock_shared()?;
-            !self.refresh_existing(&dst, len)? && self.rename_into_place(temp.path(), &dst, len)?
+            if self.refresh_existing(&dst, len)? {
+                false
+            } else {
+                // The modification time is the publication time by the
+                // store's own clock; gc measures age from it. It is set
+                // under the lock so no collector can see an older one.
+                temp.file_mut()?.set_modified(self.now())?;
+                temp.close();
+                self.rename_into_place(temp.path(), &dst, len)?
+            }
         };
         if renamed {
             temp.disarm();
@@ -635,6 +640,12 @@ impl ObjectStore for FsStore {
     /// the same bytes, then publishes it atomically. Content longer than the
     /// store's limit is [`StoreError::TooLarge`]. On any error nothing is
     /// published and the temporary file is removed.
+    ///
+    /// If the object is already stored, the new copy is discarded and the
+    /// existing one has its grace period restarted. The existing file is
+    /// judged by its header only: one with an unreadable header or another
+    /// recorded length is replaced, but damage inside the frame is found by
+    /// reading the object or by [`FsStore::verify`], not here.
     fn put(
         &self,
         reader: &mut dyn Read,
@@ -717,16 +728,18 @@ impl Walk {
             if !is_hex(a) || !is_hex(b) {
                 continue;
             }
-            match fs::read_dir(entry.path()) {
+            let path = entry.path();
+            match stat(&path) {
+                Ok(Some(meta)) if meta.is_dir() => {}
+                Ok(_) => continue,
+                Err(e) => return Some(Err(e)),
+            }
+            match fs::read_dir(&path) {
                 Ok(dir) => {
                     self.current = Some(([a, b], dir));
                     return Some(Ok(()));
                 }
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
-                    ) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => return Some(Err(e)),
             }
         }
