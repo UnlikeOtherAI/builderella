@@ -351,11 +351,15 @@ fn follow(index: &BTreeMap<&str, &Entry>, link: &str, target: &str, budget: &mut
 
 /// Why a path cannot exist on Windows, if it cannot. Source is never renamed
 /// to make it fit; an incompatible snapshot excludes Windows executors.
+///
+/// A component is refused when it contains a character Windows forbids
+/// (`< > : " | ? * \` or a control character), ends with a dot or a space,
+/// or names a device. Device names are matched without regard to ASCII case
+/// on the part before the first dot, ignoring spaces before that dot
+/// (`aux .c`, `NUL.tar.gz`): `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`,
+/// `CONOUT$`, and `COM` or `LPT` followed by one digit `0`-`9` or one of the
+/// superscript digits `¹`, `²`, `³`.
 pub fn windows_incompatibility(path: &str) -> Option<String> {
-    const RESERVED: [&str; 22] = [
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-    ];
     for component in path.split('/') {
         let illegal = |c: &char| {
             matches!(*c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '\\') || (*c as u32) < 32
@@ -366,12 +370,33 @@ pub fn windows_incompatibility(path: &str) -> Option<String> {
         if component.ends_with('.') || component.ends_with(' ') {
             return Some(format!("`{component}` ends with a dot or space"));
         }
-        let stem = component.split('.').next().unwrap_or("");
-        if RESERVED.iter().any(|r| r.eq_ignore_ascii_case(stem)) {
+        if is_windows_device_name(component) {
             return Some(format!("`{component}` is a reserved device name"));
         }
     }
     None
+}
+
+/// Whether Windows reads `component` as a device in every directory.
+fn is_windows_device_name(component: &str) -> bool {
+    let stem = component
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    match stem.as_str() {
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" => true,
+        other => ["COM", "LPT"].iter().any(|port| {
+            other.strip_prefix(port).is_some_and(|number| {
+                let mut chars = number.chars();
+                matches!(
+                    (chars.next(), chars.next()),
+                    (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+                )
+            })
+        }),
+    }
 }
 
 /// Key under which two paths collide on a case-insensitive or
@@ -972,6 +997,72 @@ mod tests {
         assert!(windows_incompatibility("a/b:c").is_some());
         assert!(windows_incompatibility("trailing./x").is_some());
         assert!(windows_incompatibility("src/auxiliary.c").is_none());
+    }
+
+    #[test]
+    fn windows_device_names() {
+        for name in [
+            "con",
+            "PRN.txt",
+            "Aux",
+            "nul.tar.gz",
+            "COM1",
+            "com9.log",
+            "LPT1",
+            "lpt9",
+            // The console pseudo-files.
+            "CONIN$",
+            "conout$",
+            "CONIN$.txt",
+            // Port number 0 and the superscript digits.
+            "COM0",
+            "lpt0.txt",
+            "COM\u{b9}",
+            "com\u{b2}.c",
+            "LPT\u{b3}.log",
+            // Spaces between the name and the extension do not hide it.
+            "aux .c",
+            "NUL  .txt",
+            "com1 .h",
+        ] {
+            let reason = windows_incompatibility(name);
+            assert!(
+                reason
+                    .as_deref()
+                    .is_some_and(|r| r.contains("reserved device name")),
+                "{name:?}: {reason:?}"
+            );
+            // In any directory, and as a directory.
+            assert!(windows_incompatibility(&format!("src/{name}")).is_some());
+            assert!(windows_incompatibility(&format!("{name}/x")).is_some());
+        }
+        for name in [
+            "COM10",
+            "COM",
+            "lpt",
+            "COMA",
+            "COM1x",
+            "console",
+            "auxiliary.c",
+            "CONIN",
+            "CONOUT$$",
+            "xCON",
+            "a.con",
+            "nul_",
+            // Superscripts other than 1 to 3 are ordinary characters.
+            "COM\u{2074}",
+            "COM\u{b9}\u{b2}",
+            // Only spaces are ignored before the dot.
+            "aux\u{a0}.c",
+            "aux_ .c",
+        ] {
+            assert_eq!(windows_incompatibility(name), None, "{name:?}");
+        }
+        // A trailing space with no extension is refused as such.
+        assert!(
+            windows_incompatibility("NUL  ")
+                .is_some_and(|reason| reason.contains("ends with a dot or space"))
+        );
     }
 
     #[test]
