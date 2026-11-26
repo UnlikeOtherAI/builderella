@@ -1,5 +1,5 @@
-//! A seekable buffer that lives in memory while it is small and moves to an
-//! anonymous temporary file when it grows.
+//! A seekable buffer that lives in memory while it is small and moves to a
+//! self-deleting temporary file when it grows.
 
 use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
@@ -16,16 +16,18 @@ enum Backing {
 #[derive(Debug)]
 pub(crate) enum SpoolContent {
     Memory(Vec<u8>),
-    /// The anonymous temporary file, at an unspecified position.
+    /// The temporary file, at an unspecified position. It is removed when
+    /// this handle is closed.
     File(File),
 }
 
 /// Holds an object while it is hashed, encoded, uploaded or verified.
 ///
 /// Up to `memory_limit` bytes stay in memory. A write that would go past
-/// that moves everything to a temporary file with no name (it disappears
-/// when the spool is dropped, or when the process dies) and continues
-/// there. Reading, writing and seeking behave as on a file.
+/// that moves everything to a temporary file and continues there. The file
+/// is removed by the operating system when the spool is dropped or the
+/// process dies: on Unix it never has a name, on Windows it is opened
+/// delete-on-close. Reading, writing and seeking behave as on a file.
 #[derive(Debug)]
 pub(crate) struct Spool {
     backing: Backing,
@@ -188,7 +190,8 @@ mod tests {
         assert!(spool.memory().is_none());
         assert_eq!(spool.len().unwrap(), 5000);
         assert_eq!(read_all(&mut spool), content);
-        // The temporary file has no name in the directory.
+        // The temporary file goes away with the spool.
+        drop(spool);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 

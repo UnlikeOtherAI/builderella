@@ -127,11 +127,9 @@ impl SseParser {
                 self.has_data = true;
             }
             b"event" => self.event = String::from_utf8_lossy(value).into_owned(),
-            b"id" => {
-                // An id containing NUL is ignored, as the format requires.
-                if !value.contains(&0) {
-                    self.last_id = Some(String::from_utf8_lossy(value).into_owned());
-                }
+            // An id containing NUL is ignored, as the format requires.
+            b"id" if !value.contains(&0) => {
+                self.last_id = Some(String::from_utf8_lossy(value).into_owned());
             }
             // `retry` and unknown fields are ignored.
             _ => {}

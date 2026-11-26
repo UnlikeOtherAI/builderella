@@ -43,7 +43,7 @@ const IN_RUNTIME: &str = "the HTTP object store blocks its calling thread and wa
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObjectStoreOptions {
     /// An object being transferred is held in memory up to this many bytes
-    /// and in an anonymous temporary file beyond that. Default 4 MiB.
+    /// and in a self-deleting temporary file beyond that. Default 4 MiB.
     pub memory_spool_bytes: usize,
     /// Largest object, by uncompressed length, that is uploaded or
     /// downloaded. Default `bella_core::defaults::MAX_OBJECT_BYTES`.

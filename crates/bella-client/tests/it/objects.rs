@@ -673,7 +673,7 @@ async fn spooled_objects_leave_nothing_behind() {
     assert_eq!(
         std::fs::read_dir(scratch.path()).unwrap().count(),
         0,
-        "temporary files are anonymous and gone"
+        "temporary files are gone once the transfer is over"
     );
 }
 
