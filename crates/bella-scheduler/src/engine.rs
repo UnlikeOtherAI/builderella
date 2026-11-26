@@ -175,7 +175,7 @@ impl<'a> Pass<'a> {
             .iter()
             .map(|(id, project)| {
                 let load = ProjectLoad {
-                    state: *project,
+                    state: project,
                     reserved: project.reserved.clone(),
                     held_attempts: project.held_attempts,
                     environments: project.environments,
@@ -201,7 +201,12 @@ impl<'a> Pass<'a> {
             fleet,
             jobs,
             standing,
-            loads: fleet.machines.iter().copied().map(MachineLoad::of).collect(),
+            loads: fleet
+                .machines
+                .iter()
+                .copied()
+                .map(MachineLoad::of)
+                .collect(),
             projects,
             band_reserved,
             band_attempts,
@@ -701,11 +706,17 @@ mod tests {
     fn missing_fraction_reports_the_worst_dimension() {
         let peak = ResourceVector::new(4000, 100, 0).with_token("gpu", 2);
         assert_eq!(
-            missing_fraction(&peak, &ResourceVector::new(4000, 100, 0).with_token("gpu", 2)),
+            missing_fraction(
+                &peak,
+                &ResourceVector::new(4000, 100, 0).with_token("gpu", 2)
+            ),
             0
         );
         assert_eq!(
-            missing_fraction(&peak, &ResourceVector::new(4000, 75, 0).with_token("gpu", 2)),
+            missing_fraction(
+                &peak,
+                &ResourceVector::new(4000, 75, 0).with_token("gpu", 2)
+            ),
             250_000
         );
         assert_eq!(

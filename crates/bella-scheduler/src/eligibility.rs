@@ -459,10 +459,7 @@ impl<'a> Fleet<'a> {
             ));
         }
         if has(Flag::OnBattery) {
-            return Some(temporary(
-                Code::OnBattery,
-                "running on battery".to_string(),
-            ));
+            return Some(temporary(Code::OnBattery, "running on battery".to_string()));
         }
         if has(Flag::Overheated) {
             return Some(temporary(

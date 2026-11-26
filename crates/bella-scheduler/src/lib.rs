@@ -151,7 +151,10 @@ pub fn explain(state: &FleetState, job: &JobId) -> Option<QueueReason> {
 /// submission needs. Only the machine side is evaluated: other queued jobs,
 /// machines kept free for a starved job and the job-level checks of
 /// [`job_blocker`] are not considered.
-pub fn evaluate(state: &FleetState, job: &QueuedJob) -> Vec<(MachineId, Result<(), MachineBlocker>)> {
+pub fn evaluate(
+    state: &FleetState,
+    job: &QueuedJob,
+) -> Vec<(MachineId, Result<(), MachineBlocker>)> {
     eligibility::evaluate(state, job)
 }
 

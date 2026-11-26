@@ -77,10 +77,7 @@ mod tests {
     #[test]
     fn dominant_share_is_the_largest_dimension() {
         let t = totals(ResourceVector::new(16_000, 64, 1000).with_token("gpu", 2));
-        assert_eq!(
-            t.dominant_share(&ResourceVector::new(4000, 32, 0)),
-            PPB / 2
-        );
+        assert_eq!(t.dominant_share(&ResourceVector::new(4000, 32, 0)), PPB / 2);
         assert_eq!(
             t.dominant_share(&ResourceVector::new(0, 0, 0).with_token("gpu", 2)),
             PPB
