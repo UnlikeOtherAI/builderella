@@ -6,8 +6,8 @@ use crate::git;
 use crate::read::{DirCache, Observed, Sig, SpoolError, Spooled, observe};
 use crate::{CaptureBarrier, CapturePolicy, CaptureResult, CaptureStats, RootSpec};
 use bella_core::snapshot::{
-    Consistency, Entry, Manifest, RootManifest, RootProvenance, SnapshotMeta, find_collisions,
-    validate_symlink, windows_incompatibility,
+    Consistency, Entry, Manifest, ManifestError, RootManifest, RootProvenance, SnapshotMeta,
+    find_collisions, validate_symlink, windows_incompatibility,
 };
 use bella_core::store::{ObjectStore, StoreError};
 use bella_core::time::Clock;
@@ -606,7 +606,24 @@ fn describe(
     provenance.sort_by(|a, b| a.mount.as_bytes().cmp(b.mount.as_bytes()));
 
     let manifest = Manifest::new(roots);
-    manifest.validate()?;
+    manifest.validate().map_err(|error| match error {
+        // The same failure as a single link that leaves its root, found by
+        // following the links through each other.
+        ManifestError::SymlinkEscapes {
+            mount,
+            path,
+            target,
+        } => CaptureError::Symlink {
+            path: if mount == "." {
+                path
+            } else {
+                format!("{mount}/{path}")
+            },
+            target,
+            reason: "the target leaves the source root when followed through other links".into(),
+        },
+        other => CaptureError::Manifest(other),
+    })?;
     let (windows_incompatible, case_sensitive_only, has_symlinks) = tree_facts(&manifest);
     let symlinks = manifest
         .roots

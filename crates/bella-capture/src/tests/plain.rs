@@ -106,6 +106,43 @@ fn escaping_or_absolute_symlink_fails_naming_the_link() {
     );
 }
 
+/// Each link stays inside the root on its own, but `out` goes through
+/// `a/b/up` (the root) and one level higher. A worker would refuse to
+/// materialize that tree, so the capture fails first and names the link.
+#[test]
+fn a29_symlink_chain_that_leaves_the_root_fails_naming_the_link() {
+    let Some(tmp) = plain_dir() else { return };
+    let root = tmp.path().join("root");
+    write(&root.join("a/b/f.txt"), b"f");
+    if !symlink("../..", &root.join("a/b/up"), true) {
+        return;
+    }
+    // On its own the first link is fine.
+    let result = snap_default(&root);
+    assert_eq!(paths(&result), ["a/b/f.txt", "a/b/up"]);
+
+    assert!(symlink("a/b/up/..", &root.join("out"), true));
+    let store = MemStore::new();
+    let err = snap(&root, &CapturePolicy::default(), &store).unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            CaptureError::Symlink { path, target, reason }
+                if path == "out" && target == "a/b/up/.." && reason.contains("other links")
+        ),
+        "{err}"
+    );
+    assert!(err.to_string().contains("out"), "{err}");
+
+    // Under a mount the link is named the way the capture shows paths.
+    let mounted = [RootSpec::mounted(&root, "app")];
+    let err = capture(&mounted, &CapturePolicy::default(), &store, None).unwrap_err();
+    assert!(
+        matches!(&err, CaptureError::Symlink { path, .. } if path == "app/out"),
+        "{err}"
+    );
+}
+
 /// A link to a directory is one entry. What it points at is captured where
 /// it really is, never a second time through the link.
 #[test]
