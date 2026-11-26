@@ -349,6 +349,42 @@ fn a11_one_scope_owns_every_spawn_and_kill_ends_them_all() {
     assert!(evidence.contains("name released"), "{evidence}");
 }
 
+/// A scope dropped while empty takes its keeper with it. A handle that is
+/// still open starts a new one with its next spawn, so the scope stays
+/// adoptable after every handle is gone.
+#[test]
+fn a16_keeper_is_restored_before_the_next_spawn() {
+    let adapter = adapter();
+    let mut first = Guard::new("a16-keeper", &Limits::default());
+    let identity = first.identity();
+    drop(adapter.adopt_job(&identity).unwrap().expect("a live job"));
+
+    let mut sleeper = spawn_ready(&mut first, "sleep", &["60"]);
+    drop(first.release());
+    let adopted = adapter.adopt_job(&identity).unwrap();
+    let mut adopted = Guard(Some(adopted.expect("the keeper holds the name")));
+    adopted.kill().unwrap();
+    assert!(wait_exit(sleeper.as_mut()).code.is_some());
+    assert!(becomes_empty(&adopted));
+    Box::new(adopted.release()).destroy().unwrap();
+    assert!(adapter.adopt(&identity).unwrap().is_none());
+}
+
+/// A scope that is dropped without ever being destroyed leaves nothing
+/// behind once it is empty.
+#[test]
+fn dropping_an_empty_scope_removes_the_job() {
+    let adapter = adapter();
+    let mut scope = Guard::new("drop-empty", &Limits::default());
+    let identity = scope.identity();
+    assert!(run(&mut scope, &shell("exit 0")).exit.success());
+    assert!(becomes_empty(&scope));
+    drop(scope.release());
+    wait_until("the job name to go", || {
+        adapter.adopt_job(&identity).unwrap().is_none()
+    });
+}
+
 /// A16: a stale identity never leads to a process. The job is found by name
 /// only, so once it is gone nothing can be signalled, whatever now runs.
 #[test]
@@ -804,8 +840,13 @@ fn stop_scope_terminates_then_kills_until_empty() {
     let membership =
         stop_scope(&mut *scope, Duration::from_secs(2), Duration::from_secs(30)).unwrap();
     assert_eq!(membership, Membership::Empty);
-    assert!(polite.try_wait().unwrap().is_some());
-    assert!(stubborn.try_wait().unwrap().is_some());
+    // A member stops counting when its exit begins, a moment before its
+    // process handle is signalled.
+    assert!(wait_exit(polite.as_mut()).code.is_some());
+    assert_eq!(
+        wait_exit(stubborn.as_mut()).code,
+        Some(KILL_EXIT_CODE as i32)
+    );
     // An empty scope is left alone.
     assert_eq!(
         stop_scope(&mut *scope, Duration::ZERO, Duration::ZERO).unwrap(),

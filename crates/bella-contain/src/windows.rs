@@ -13,14 +13,25 @@
 //! so that the restarted worker can [`Containment::adopt`] it by name,
 //! account for what is left and stop it. Cleanup is therefore always
 //! explicit: [`Scope::kill`], then [`Scope::destroy`]. Dropping a
-//! [`JobScope`] only closes this handle; it stops nothing.
+//! [`JobScope`] closes this handle and stops no member.
 //!
-//! A named job object leaves the namespace when its last handle is closed
-//! *and* it has no processes. A job that can no longer be opened is therefore
-//! proof that the scope is empty, which is what `adopt` returning `Ok(None)`
-//! means. Identity is the object name, never a process id, so a reused PID is
-//! never mistaken for a member (process ids reported by the job are only
-//! acted on after [`IsProcessInJob`] confirmed them on an open handle).
+//! A kernel object keeps its name only while some handle to it is open; the
+//! processes in a job do not count. A crashed worker would therefore leave a
+//! job that still runs but can no longer be opened. To prevent that, every
+//! scope has a *keeper*: a `cmd.exe` process that is created suspended and
+//! never resumed, holding a query-only handle to the job. It runs no code,
+//! sits in a job of its own (`Local\bella-<scope name>.keeper`) rather than
+//! in the scope, and is ended when the scope is destroyed or dropped while
+//! empty. A scope dropped with live members keeps its keeper, which is what
+//! makes it adoptable.
+//!
+//! `adopt` returns `Ok(None)` when the job can no longer be opened. With the
+//! keeper in place that happens only once the scope was destroyed or dropped
+//! empty, so it is evidence that nothing is left. The one way to defeat it is
+//! for something else to kill the keeper while no worker holds the job.
+//! Identity is the object name, never a process id, so a reused PID is never
+//! mistaken for a member (process ids reported by the job are only acted on
+//! after [`IsProcessInJob`] confirmed them on an open handle).
 //!
 //! `Local\` is the session namespace: a worker has to restart in the same
 //! logon session (for a service that is session 0) to find its jobs again.
@@ -30,7 +41,7 @@
 //! | `Limits` field | Job Object control | Notes |
 //! | --- | --- | --- |
 //! | `memory_bytes` | `JOB_OBJECT_LIMIT_JOB_MEMORY` | A limit on **committed** memory of all members together, not a physical-RAM reservation. Allocations beyond it fail; nothing is killed. |
-//! | `max_processes` | `JOB_OBJECT_LIMIT_ACTIVE_PROCESS` | Counts every member, including the console host (`conhost.exe`) Windows starts for a console program. |
+//! | `max_processes` | `JOB_OBJECT_LIMIT_ACTIVE_PROCESS` | The console host (`conhost.exe`) Windows starts for a console program is a member and is killed with the job, but Windows does not count it against this limit. |
 //! | `cpu_milli` | CPU rate control, hard cap | Share of **all** logical processors. A request at or above the whole machine removes the cap. |
 //! | `low_priority` | `JOB_OBJECT_LIMIT_PRIORITY_CLASS` | Below-normal priority class. A scheduling preference, not a limit. |
 //!
@@ -168,6 +179,9 @@ pub const KILL_EXIT_CODE: u32 = 1;
 pub const CTRL_BREAK_EXIT_CODE: i32 = 0xC000_013A_u32 as i32;
 
 const OBJECT_NAME_PREFIX: &str = r"Local\bella-";
+/// Appended to a scope's object name for its keeper job. Scope names cannot
+/// contain a dot, so this never collides with another scope.
+const KEEPER_SUFFIX: &str = ".keeper";
 const MAX_SCOPE_NAME_LEN: usize = 200;
 /// Longest command line `CreateProcessW` accepts, without the terminator.
 const MAX_COMMAND_LINE_UNITS: usize = 32_766;
@@ -175,6 +189,7 @@ const MAX_COMMAND_LINE_UNITS: usize = 32_766;
 // winnt.h values that windows-sys only exposes behind its very large
 // `Win32_System_SystemServices` feature.
 const JOB_OBJECT_ALL_ACCESS: u32 = 0x001F_003F;
+const JOB_OBJECT_QUERY: u32 = 0x0004;
 const JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT: u32 = 3;
 const JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS: u32 = 8;
 const JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT: u32 = 9;
@@ -609,6 +624,77 @@ fn associate_port(job: HANDLE) -> Result<OwnedHandle, ContainError> {
     let port = unsafe { owned(port) };
     set_completion_port(job, raw(&port))?;
     Ok(port)
+}
+
+/// Starts the process that keeps both job names alive: `cmd.exe`, created
+/// suspended and never resumed, placed in `keeper_job` and given query-only
+/// handles to both jobs. Names of kernel objects last only while a handle is
+/// open, so without it a job whose worker died could not be found again.
+fn start_keeper(job: HANDLE, keeper_job: HANDLE) -> Result<(), ContainError> {
+    let system = system_directory()?;
+    let application = wide_path(&system.join("cmd.exe"))?;
+    let mut line = wide("cmd.exe");
+    let cwd = wide_path(&system)?;
+    let environment = [0u16; 2];
+    let startup = STARTUPINFOW {
+        cb: size_of::<STARTUPINFOW>() as u32,
+        ..Default::default()
+    };
+    let mut info = PROCESS_INFORMATION::default();
+    // SAFETY: every pointer refers to a live, NUL-terminated or correctly
+    // sized buffer and `line` is mutable. No handle is inherited.
+    let created = unsafe {
+        CreateProcessW(
+            application.as_ptr(),
+            line.as_mut_ptr(),
+            null(),
+            null(),
+            0,
+            CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+            environment.as_ptr().cast(),
+            cwd.as_ptr(),
+            &startup,
+            &mut info,
+        )
+    };
+    if created == 0 {
+        return Err(win_err("CreateProcessW(keeper)"));
+    }
+    // SAFETY: CreateProcessW succeeded, so both handles are ours to close.
+    // The thread handle is closed without ever resuming the thread.
+    let (process, _thread) = unsafe { (owned(info.hProcess), owned(info.hThread)) };
+    let place = || {
+        // SAFETY: both handles are open.
+        if unsafe { AssignProcessToJobObject(keeper_job, raw(&process)) } == 0 {
+            return Err(win_err("AssignProcessToJobObject(keeper)"));
+        }
+        for handle in [job, keeper_job] {
+            let mut remote = null_mut();
+            // SAFETY: all handles are open and `remote` is a valid out
+            // pointer. The copy lives in the keeper's handle table.
+            let ok = unsafe {
+                DuplicateHandle(
+                    GetCurrentProcess(),
+                    handle,
+                    raw(&process),
+                    &mut remote,
+                    JOB_OBJECT_QUERY,
+                    0,
+                    0,
+                )
+            };
+            if ok == 0 {
+                return Err(win_err("DuplicateHandle(keeper)"));
+            }
+        }
+        Ok(())
+    };
+    let placed = place();
+    if placed.is_err() {
+        // SAFETY: the process handle is open. The process never ran.
+        unsafe { TerminateProcess(raw(&process), 0) };
+    }
+    placed
 }
 
 // ---------------------------------------------------------------------------
@@ -1247,6 +1333,8 @@ pub struct JobScope {
     name: String,
     object_name: String,
     job: OwnedHandle,
+    /// Job holding only the keeper process.
+    keeper_job: OwnedHandle,
     /// Completion port receiving the job's notifications. `None` on an
     /// adopted scope whose port could not be replaced.
     port: Option<OwnedHandle>,
@@ -1263,6 +1351,15 @@ impl JobScope {
     /// Name of the job object in the kernel object namespace.
     pub fn object_name(&self) -> &str {
         &self.object_name
+    }
+
+    /// Starts a keeper if there is none, for instance because another handle
+    /// to this scope was dropped while the scope was empty.
+    fn ensure_keeper(&self) -> Result<(), ContainError> {
+        if accounting(raw(&self.keeper_job))?.ActiveProcesses == 0 {
+            start_keeper(self.handle(), raw(&self.keeper_job))?;
+        }
+        Ok(())
     }
 
     /// Moves queued job notifications into the counters. Also keeps the
@@ -1432,6 +1529,7 @@ impl Scope for JobScope {
     fn spawn(&mut self, spec: &ProcessSpec) -> Result<Spawned, ContainError> {
         let mut line = wide(&command_line(&spec.argv)?);
         let program = spec.argv[0].clone();
+        self.ensure_keeper()?;
         if !spec.cwd.is_absolute() {
             return Err(ContainError::Other(format!(
                 "working directory `{}` is not absolute",
@@ -1524,7 +1622,8 @@ impl Scope for JobScope {
     }
 
     /// CPU time covers every process that was ever a member. Peak memory is
-    /// the job's peak commit charge. Current memory is the sum of the private
+    /// the job's peak commit charge; at the limit it can include the size of
+    /// the allocation that was refused. Current memory is the sum of the private
     /// commit of the members that could be opened, the same quantity the
     /// memory limit applies to. Disk use is not measured.
     fn usage(&self) -> Result<UsageSummary, ContainError> {
@@ -1572,26 +1671,45 @@ impl Scope for JobScope {
         Ok(())
     }
 
-    /// On `NotEmpty` this handle is closed like on any drop; the job and its
-    /// processes remain and can be adopted again by identity.
+    /// On `NotEmpty` this handle is closed like on any drop; the job, its
+    /// processes and its keeper remain and can be adopted again by identity.
     fn destroy(self: Box<Self>) -> Result<String, ContainError> {
         let accounting = accounting(self.handle())?;
         if accounting.ActiveProcesses > 0 {
             return Err(ContainError::NotEmpty(self.name.clone()));
         }
         let object_name = self.object_name.clone();
+        // Dropping an empty scope ends its keeper and closes this handle.
         drop(self);
-        // With no members left, the name disappears with the last handle.
-        let name_state = match open_job_object(&object_name) {
-            Ok(None) => "handle closed, name released",
-            Ok(Some(_)) => "handle closed, name still held by another handle",
-            Err(_) => "handle closed",
+        // The name goes once the keeper's handles are closed, which the
+        // kernel does a moment after the keeper is terminated.
+        let started = Instant::now();
+        let name_state = loop {
+            match open_job_object(&object_name) {
+                Ok(None) => break "handle closed, keeper ended, name released",
+                Ok(Some(_)) if started.elapsed() < Duration::from_secs(5) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Ok(Some(_)) => break "handle closed, name still held by another handle",
+                Err(_) => break "handle closed",
+            }
         };
         Ok(format!(
             "job object {object_name}: ActiveProcesses=0 (TotalProcesses={}, \
              TotalTerminatedProcesses={}); {name_state}",
             accounting.TotalProcesses, accounting.TotalTerminatedProcesses
         ))
+    }
+}
+
+impl Drop for JobScope {
+    /// An empty scope has nothing to adopt, so its keeper goes with the
+    /// handle and the job disappears. A scope with members keeps its keeper.
+    fn drop(&mut self) {
+        if accounting(self.handle()).is_ok_and(|accounting| accounting.ActiveProcesses == 0) {
+            // SAFETY: the keeper job handle is open; it holds only the keeper.
+            unsafe { TerminateJobObject(raw(&self.keeper_job), 0) };
+        }
     }
 }
 
@@ -1706,7 +1824,11 @@ impl JobObjects {
         notes.push(format!(
             "cpu: hard cap as a share of all {logical_cpus} logical processors"
         ));
-        notes.push("process count: includes console host processes".into());
+        notes.push(
+            "process count: console hosts (conhost.exe) are members but Windows does not \
+             count them against the limit"
+                .into(),
+        );
         notes.push("disk: not limited".into());
         notes.extend(outer_job_note());
         notes.push(polite_stop_note());
@@ -1738,12 +1860,24 @@ impl JobObjects {
                  (adopt the existing scope instead)"
             )));
         }
+        let keeper_name = format!("{object_name}{KEEPER_SUFFIX}");
+        let (keeper_job, existed) = create_job_object(Some(&keeper_name)).map_err(|error| {
+            ContainError::Other(format!("CreateJobObjectW({keeper_name}): {error}"))
+        })?;
+        if existed {
+            return Err(ContainError::Other(format!(
+                "job object {keeper_name} is left over from an earlier scope of this name"
+            )));
+        }
         apply_limits(raw(&job), limits, self.logical_cpus)?;
         let port = associate_port(raw(&job))?;
+        // Last, so that an error above leaves no process behind.
+        start_keeper(raw(&job), raw(&keeper_job))?;
         Ok(JobScope {
             name: name.to_owned(),
             object_name,
             job,
+            keeper_job,
             port: Some(port),
             events: Mutex::new(LimitEvents::default()),
             roots: Vec::new(),
@@ -1779,15 +1913,27 @@ impl JobObjects {
                 associate_port(raw(&job))
             })
             .ok();
-        Ok(Some(JobScope {
+        let keeper_name = format!("{object_name}{KEEPER_SUFFIX}");
+        let keeper_job = match open_job_object(&keeper_name)? {
+            Some(keeper_job) => keeper_job,
+            None => create_job_object(Some(&keeper_name))
+                .map(|(keeper_job, _)| keeper_job)
+                .map_err(|error| {
+                    ContainError::Other(format!("CreateJobObjectW({keeper_name}): {error}"))
+                })?,
+        };
+        let scope = JobScope {
             name: identity.name.clone(),
             object_name,
             job,
+            keeper_job,
             port,
             events: Mutex::new(LimitEvents::default()),
             roots: Vec::new(),
             logical_cpus: self.logical_cpus,
-        }))
+        };
+        scope.ensure_keeper()?;
+        Ok(Some(scope))
     }
 }
 
