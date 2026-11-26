@@ -133,9 +133,10 @@ Arguments worth knowing:
 1. `plan_job` when it is unclear whether the fleet can run the job at all.
    Skip it for routine runs.
 2. `submit_job`. The result has the job id, the snapshot id, the capture's
-   consistency level, the queue reason, any paths left out as secrets and a
-   dashboard link. The job is for the files as they were at that moment;
-   later edits are not part of it.
+   consistency level, the queue reason, any paths left out as secrets and,
+   when a dashboard URL is configured, a link to the job's page there
+   (`<dashboard url>/#/jobs/<job id>`). The job is for the files as they
+   were at that moment; later edits are not part of it.
 3. `wait_job` until `timed_out` is `false`. Long builds take several calls.
    `read_logs` in between shows progress.
 4. On failure, `get_job` names the failing step and exit code and `read_logs`
