@@ -16,8 +16,9 @@
 //! `permanent` and are reported before temporary ones:
 //!
 //! * platform: the recipe's build hosts (or the submitting platform when it
-//!   declares none), its test runtime, and a `Require`, `Machine` or `Pool`
-//!   placement choice. All of these use `WrongPlatform`;
+//!   declares none) and its test runtime (`WrongPlatform`);
+//! * the submission's own `Require`, `Machine` or `Pool` placement choice
+//!   (`PlacementConstraint`);
 //! * the snapshot against the machine's filesystem (`WrongPlatform`);
 //! * isolation and capability requirements (`MissingCapability`; a
 //!   capability that is installed but occupied, unhealthy or unverified is
@@ -30,13 +31,23 @@
 //! freshness, reconciliation, availability flags, the worker's own
 //! admission answer, a recent rejection of this job, the machine's
 //! concurrency limit, capacity, and a machine kept free for another job.
-//! `Overheated` is reported as `ForegroundProtection` and `Upgrading` as
-//! `MachineDraining`, the closest existing codes.
+//! Each availability flag has its own code: an `Overheated` machine is
+//! reported as `Overheated` and one whose worker is being replaced as
+//! `MachineUpgrading`, distinct from foreground protection and from a
+//! drain its owner asked for.
 //!
 //! Capacity is `reserved + peak <= min(managed ceiling, effective budget)`
 //! in every dimension; see [`effective_capacity`]. The peak is the job's
 //! whole simultaneous envelope, so a job is never placed where only part of
 //! it fits.
+//!
+//! Named tokens follow the same rule as CPU and memory, and it is the rule
+//! `bella-protect` applies on the worker: a machine grants a token up to
+//! the count its policy declares, minus what is reserved. The worker's
+//! budget always carries every declared token at its declared count, so a
+//! token the budget does not name is one the worker would refuse, and the
+//! scheduler grants none of it. `tests/scheduler/tokens.rs` runs one
+//! scenario through both crates and fails if their answers differ.
 //!
 //! # Order of service
 //!

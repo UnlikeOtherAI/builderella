@@ -45,6 +45,22 @@
 //! An offered or start-authorised grant counts with `u_i = 0`. A suspended
 //! grant counts exactly like a running one: suspension frees no memory and
 //! no tokens, and it is never proposed as memory relief.
+//!
+//! # Tokens
+//!
+//! A named token is granted up to the count the machine policy declares:
+//! a request for `n` of a token fits when `held + n ≤ declared`, where
+//! `held` is what the grants reserve. A token the policy does not declare
+//! is refused as something this machine can never grant.
+//!
+//! [`Budget::ceiling`] carries every declared token at its declared count,
+//! always, and [`Budget::free`] the count minus what is held. The
+//! controller's scheduler relies on exactly that: it takes
+//! `min(its own ceiling, this budget)` per token and reads a token the
+//! budget does not name as zero, because a worker that does not report a
+//! token would refuse it here. A budget must therefore never leave out a
+//! declared token. `bella-scheduler`'s `tests/scheduler/tokens.rs` runs one
+//! scenario through both crates and fails if the answers differ.
 
 #![forbid(unsafe_code)]
 
@@ -223,6 +239,11 @@ pub struct Budget {
     /// granted: the policy ceiling reduced by live foreground CPU use,
     /// available memory and free disk. This is the heartbeat's effective
     /// budget. Without fresh telemetry it is the static policy ceiling.
+    ///
+    /// Its `tokens` are always exactly the policy's: every declared token
+    /// at its declared count, with or without telemetry and whatever gate
+    /// is closed. No observation reduces a token and `max_managed` does not
+    /// cap one. See [Tokens](crate#tokens).
     pub ceiling: ResourceVector,
     /// `ceiling` minus what the grants are charged. Zero in every dimension
     /// without fresh telemetry. It describes capacity only; whether an

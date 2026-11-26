@@ -1498,9 +1498,9 @@ fn queued_jobs(atlas: &Project, nimbus: &Project, harbor: &Project) -> Vec<JobVi
                 ),
                 blocker(
                     BUILDER_2,
-                    Code::MachineDraining,
+                    Code::MachineUpgrading,
                     false,
-                    "is draining for a worker upgrade and accepts no new work",
+                    "its worker is being upgraded and accepts no new work",
                 ),
             ],
         ),
@@ -1528,6 +1528,12 @@ fn queued_jobs(atlas: &Project, nimbus: &Project, harbor: &Project) -> Vec<JobVi
                     Code::BuildsDisabled,
                     true,
                     "builds are disabled by its policy (infrastructure only)",
+                ),
+                blocker(
+                    LINUX_1,
+                    Code::PlacementConstraint,
+                    true,
+                    "the submission requires macos; this machine is linux-x86_64",
                 ),
             ],
         ),
@@ -1600,6 +1606,43 @@ fn queued_jobs(atlas: &Project, nimbus: &Project, harbor: &Project) -> Vec<JobVi
             pool: "linux".into(),
         };
     }
+    jobs.push(j);
+
+    let mut j = queued(
+        "q-overheated",
+        harbor,
+        lint_spec(Priority::Background),
+        14 * 60 + 9,
+        reason(
+            Code::Overheated,
+            "The only machine in pool `linux`, linux-1, is too hot to take new work. The job starts when it has cooled down.",
+            vec![blocker(
+                LINUX_1,
+                Code::Overheated,
+                false,
+                "thermal state is serious; no new work until the machine cools down",
+            )],
+        ),
+    );
+    if let Some(s) = j.spec.as_mut() {
+        s.placement = PlacementChoice::Pool {
+            pool: "linux".into(),
+        };
+    }
+    jobs.push(j);
+
+    let mut j = queued(
+        "q-environment-quota",
+        nimbus,
+        preview_spec(Priority::Normal, rv(4_000, 8, 20)),
+        9 * 60 + 20,
+        reason(
+            Code::EnvironmentQuota,
+            "Project nimbus keeps 2 of at most 2 environments, and this job would start another. It starts when one of them ends.",
+            Vec::new(),
+        ),
+    );
+    j.session = Some(session("onboarding screens", "claude", "studio-1"));
     jobs.push(j);
 
     for (index, j) in jobs.iter_mut().enumerate() {

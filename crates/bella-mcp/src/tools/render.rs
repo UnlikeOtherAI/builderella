@@ -84,18 +84,29 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (year, month, day)
 }
 
-/// Link to a job in the dashboard. A `{job}` placeholder in the configured
-/// URL is replaced; otherwise `/jobs/<id>` is appended.
+/// Link to a job in the dashboard, or `None` when no dashboard is
+/// configured. See [`job_link`].
 pub(crate) fn dashboard_link(config: &Config, job_id: &str) -> Option<String> {
-    let base = config.dashboard_url.as_deref()?.trim();
+    job_link(config.dashboard_url.as_deref()?, job_id)
+}
+
+/// The dashboard's page for one job.
+///
+/// The dashboard is a single page routed by the URL fragment, so the link
+/// is `<base>/#/jobs/<id>`; a base written with a trailing `/`, `#` or
+/// `/#/` gives the same link. A base that contains `{job}` is a template
+/// instead: the placeholder is replaced and nothing is appended.
+fn job_link(base: &str, job_id: &str) -> Option<String> {
+    let base = base.trim();
     if base.is_empty() {
         return None;
     }
-    Some(if base.contains("{job}") {
-        base.replace("{job}", job_id)
-    } else {
-        format!("{}/jobs/{job_id}", base.trim_end_matches('/'))
-    })
+    if base.contains("{job}") {
+        return Some(base.replace("{job}", job_id));
+    }
+    let base = base.trim_end_matches('/');
+    let base = base.strip_suffix('#').unwrap_or(base).trim_end_matches('/');
+    Some(format!("{base}/#/jobs/{job_id}"))
 }
 
 /// `{code, message}` for a queue reason.
@@ -387,6 +398,39 @@ mod tests {
             rfc3339(UnixMillis(1_735_689_599_999)),
             "2024-12-31T23:59:59Z"
         );
+    }
+
+    #[test]
+    fn job_links_use_the_dashboard_fragment_route() {
+        let id = "job_0123";
+        for base in [
+            "https://fleet.test",
+            "https://fleet.test/",
+            "https://fleet.test/#",
+            "https://fleet.test/#/",
+            "  https://fleet.test//  ",
+        ] {
+            assert_eq!(
+                job_link(base, id).as_deref(),
+                Some("https://fleet.test/#/jobs/job_0123"),
+                "{base:?}"
+            );
+        }
+        assert_eq!(
+            job_link("https://fleet.test/ui/", id).as_deref(),
+            Some("https://fleet.test/ui/#/jobs/job_0123")
+        );
+        // A template is used as written, wherever the placeholder is.
+        assert_eq!(
+            job_link("https://fleet.test/#/jobs/{job}?tab=logs", id).as_deref(),
+            Some("https://fleet.test/#/jobs/job_0123?tab=logs")
+        );
+        assert_eq!(
+            job_link("https://ci.test/builds/{job}", id).as_deref(),
+            Some("https://ci.test/builds/job_0123")
+        );
+        assert_eq!(job_link("", id), None);
+        assert_eq!(job_link("   ", id), None);
     }
 
     #[test]

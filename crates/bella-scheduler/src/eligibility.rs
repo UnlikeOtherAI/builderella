@@ -24,32 +24,29 @@ use bella_core::{MachineId, ProjectId};
 use std::collections::BTreeMap;
 
 /// The total a machine can hold right now: the static ceiling, narrowed by
-/// the worker's current protection budget.
+/// the worker's current protection budget. With a budget this is exactly
+/// `ceiling.min(budget)`.
 ///
-/// CPU, memory and disk take the smaller value. A token is limited by the
-/// budget only when the budget names it; a budget that says nothing about a
-/// token leaves the ceiling's count in force. Tokens the ceiling does not
-/// declare are never granted.
+/// CPU, memory and disk take the smaller value. So does every token the
+/// ceiling declares, and a token the budget does not name counts as zero.
+/// That is safe to rely on because of what a worker reports: its budget is
+/// `bella_protect::Budget::ceiling`, which always names every token the
+/// worker's policy declares, at the declared count. A budget that is silent
+/// about a token therefore comes from a worker whose policy does not
+/// declare it yet (the controller's policy revision is newer), and that
+/// worker refuses any request for the token. Offering it would only earn a
+/// rejection, so none is granted until the worker reports the token.
+///
+/// Tokens the ceiling does not declare are never granted, whatever the
+/// budget says. Without a budget the ceiling stands as it is; such a
+/// machine gets no offers for another reason.
 pub fn effective_capacity(
     ceiling: &ResourceVector,
     budget: Option<&ResourceVector>,
 ) -> ResourceVector {
-    let Some(budget) = budget else {
-        return ceiling.clone();
-    };
-    let tokens = ceiling
-        .tokens
-        .iter()
-        .map(|(name, count)| {
-            let granted = budget.tokens.get(name).copied().unwrap_or(*count);
-            (name.clone(), (*count).min(granted))
-        })
-        .collect();
-    ResourceVector {
-        cpu_milli: ceiling.cpu_milli.min(budget.cpu_milli),
-        memory_bytes: ceiling.memory_bytes.min(budget.memory_bytes),
-        disk_bytes: ceiling.disk_bytes.min(budget.disk_bytes),
-        tokens,
+    match budget {
+        Some(budget) => ceiling.min(budget),
+        None => ceiling.clone(),
     }
 }
 
@@ -180,6 +177,9 @@ impl<'a> Fleet<'a> {
         let compat = &spec.compatibility;
         let here = describe(machine);
         let wrong_platform = |message: String| blocker(machine, Code::WrongPlatform, true, message);
+        // The submission's own choice of platform, machine or pool.
+        let placement =
+            |message: String| blocker(machine, Code::PlacementConstraint, true, message);
 
         // Build host: the declared set, or the submitting platform when the
         // recipe declares none.
@@ -217,7 +217,7 @@ impl<'a> Fleet<'a> {
             PlacementChoice::Any | PlacementChoice::Prefer { .. } => {}
             PlacementChoice::Require { platform } => {
                 if !platform.matches(machine.platform, &machine.os_version) {
-                    return Some(wrong_platform(format!(
+                    return Some(placement(format!(
                         "the submission requires {platform}; this machine is {here}"
                     )));
                 }
@@ -225,13 +225,13 @@ impl<'a> Fleet<'a> {
             PlacementChoice::Machine { machine: wanted } => {
                 if machine.id.as_str() != wanted {
                     if machine.name != *wanted {
-                        return Some(wrong_platform(format!(
+                        return Some(placement(format!(
                             "the submission requires machine `{wanted}`"
                         )));
                     }
                     let sharing = self.name_counts.get(wanted.as_str()).copied().unwrap_or(0);
                     if sharing > 1 {
-                        return Some(wrong_platform(format!(
+                        return Some(placement(format!(
                             "the submission requires machine `{wanted}`, a name {sharing} \
                              machines share; request it by id ({})",
                             machine.id
@@ -246,7 +246,7 @@ impl<'a> Fleet<'a> {
                     } else {
                         format!("`{}`", machine.policy.pools.join("`, `"))
                     };
-                    return Some(wrong_platform(format!(
+                    return Some(placement(format!(
                         "the submission requires pool `{pool}`; this machine is in {member_of}"
                     )));
                 }
@@ -442,7 +442,7 @@ impl<'a> Fleet<'a> {
         }
         if has(Flag::Upgrading) {
             return Some(temporary(
-                Code::MachineDraining,
+                Code::MachineUpgrading,
                 "its worker is being upgraded and accepts no new work".to_string(),
             ));
         }
@@ -463,7 +463,7 @@ impl<'a> Fleet<'a> {
         }
         if has(Flag::Overheated) {
             return Some(temporary(
-                Code::ForegroundProtection,
+                Code::Overheated,
                 "overheated: thermal protection is holding back managed work".to_string(),
             ));
         }

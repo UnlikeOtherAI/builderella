@@ -96,6 +96,20 @@ pub enum Verification {
     Corrupt { reason: String },
 }
 
+/// What [`FsStore::repair`] and [`FsStore::repair_compressed`] found under
+/// the digest and did about it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Repaired {
+    /// The stored object was intact. It was kept, the supplied copy was
+    /// discarded and the grace period was restarted, as a `put` would.
+    Intact,
+    /// The stored object was damaged and the supplied copy has taken its
+    /// place. `reason` is what [`FsStore::verify`] reported.
+    Replaced { reason: String },
+    /// Nothing was stored under the digest; the supplied copy was published.
+    Stored,
+}
+
 /// Content-addressed object store in a directory.
 ///
 /// See the [crate documentation](crate) for the layout, the guarantees and
@@ -198,11 +212,27 @@ impl FsStore {
     /// [`StoreError::TooLarge`], and a malformed, truncated or over-long
     /// stream is an `InvalidData` I/O error. Nothing is published and no
     /// temporary file is left in any of those cases.
+    ///
+    /// An object that is already stored is judged by its header only, as in
+    /// `put`; use [`repair_compressed`](Self::repair_compressed) to replace
+    /// one whose body is damaged.
     pub fn put_compressed(
         &self,
         reader: &mut dyn Read,
         expected: &Digest,
     ) -> Result<u64, StoreError> {
+        let (temp, len) = self.receive_compressed(reader, expected)?;
+        self.publish(temp, expected, len)?;
+        Ok(len)
+    }
+
+    /// Writes a stream in the stored format to a temporary file, checking
+    /// that it is well formed and that its content hashes to `expected`.
+    fn receive_compressed(
+        &self,
+        reader: &mut dyn Read,
+        expected: &Digest,
+    ) -> Result<(TempFile, u64), StoreError> {
         let header = Header::read_from(reader)?;
         if header.len > self.max_object_bytes {
             return Err(StoreError::TooLarge {
@@ -237,8 +267,94 @@ impl FsStore {
                 actual,
             });
         }
-        self.publish(temp, expected, len)?;
-        Ok(len)
+        Ok((temp, len))
+    }
+
+    /// Compresses and hashes `reader` into a temporary file, checking the
+    /// size limit and that the content hashes to `expected` when given.
+    fn receive(
+        &self,
+        reader: &mut dyn Read,
+        expected: Option<&Digest>,
+    ) -> Result<(TempFile, Digest, u64), StoreError> {
+        let mut temp = self.create_temp()?;
+        let encoded = format::encode(reader, temp.file_mut()?, self.max_object_bytes)?;
+        if let Some(expected) = expected
+            && *expected != encoded.digest
+        {
+            return Err(StoreError::DigestMismatch {
+                expected: expected.clone(),
+                actual: encoded.digest,
+            });
+        }
+        Ok((temp, encoded.digest, encoded.len))
+    }
+
+    /// Stores the object `digest` from its bytes, replacing a stored copy
+    /// that fails [`verify`](Self::verify).
+    ///
+    /// `put` and `put_compressed` judge an existing object by its header
+    /// alone, so that putting an object the store already has costs one
+    /// small read however large it is. The price is that they keep a copy
+    /// whose body is damaged. `repair` is the explicit, slower call for
+    /// that case: it reads the stored copy completely and replaces it only
+    /// if it is damaged. Call it for a digest that `verify` or a failed read
+    /// reported as corrupt; [`remove`](Self::remove) followed by a `put`
+    /// does the same in two steps.
+    ///
+    /// The supplied bytes are checked exactly as `put` checks them, before
+    /// the stored copy is looked at: content that does not hash to `digest`
+    /// is [`StoreError::DigestMismatch`] and changes nothing. A damaged copy
+    /// is replaced by an atomic rename while holding the publish lock
+    /// exclusively, so readers see the old file or the new one, and
+    /// concurrent repairs of one object replace it once. The replacement
+    /// starts a new grace period. On Windows the rename can be refused
+    /// while a reader holds the damaged file open; the call then fails
+    /// with that I/O error, changes nothing and can be repeated.
+    pub fn repair(&self, digest: &Digest, reader: &mut dyn Read) -> Result<Repaired, StoreError> {
+        let (temp, _, len) = self.receive(reader, Some(digest))?;
+        self.publish_repair(temp, digest, len)
+    }
+
+    /// [`repair`](Self::repair) for a copy that is already in the
+    /// [stored format](crate::format), checked as
+    /// [`put_compressed`](Self::put_compressed) checks it.
+    pub fn repair_compressed(
+        &self,
+        digest: &Digest,
+        reader: &mut dyn Read,
+    ) -> Result<Repaired, StoreError> {
+        let (temp, len) = self.receive_compressed(reader, digest)?;
+        self.publish_repair(temp, digest, len)
+    }
+
+    /// Deletes the object `digest` and returns whether there was one.
+    ///
+    /// Unlike [`gc`](Self::gc) this asks nothing: the object is deleted
+    /// whether or not anything references it, however young it is and
+    /// whether or not it is intact. It exists to take a damaged object out
+    /// of the store; deciding that the object may go is the caller's job.
+    ///
+    /// The delete happens while holding the publish lock exclusively, the
+    /// way `gc` deletes, so it never interleaves with a `put`: a put of the
+    /// same object that returned earlier is undone, one that publishes
+    /// afterwards stays. A reader that already opened the object keeps
+    /// reading the deleted file.
+    pub fn remove(&self, digest: &Digest) -> Result<bool, StoreError> {
+        let path = self.object_path(digest);
+        let lock = File::open(&self.lock_path)?;
+        let removed = {
+            let _held = ExclusiveLock::acquire(&lock)?;
+            match fs::remove_file(&path) {
+                Ok(()) => true,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+                Err(e) => return Err(e.into()),
+            }
+        };
+        if removed && let Some(shard) = path.parent() {
+            sync_dir(shard)?;
+        }
+        Ok(removed)
     }
 
     /// Opens the stored bytes of an object, in the
@@ -574,6 +690,58 @@ impl FsStore {
         Ok(())
     }
 
+    /// Publishes a complete temporary file as `digest` unless an intact
+    /// copy is stored, replacing a damaged one.
+    fn publish_repair(
+        &self,
+        mut temp: TempFile,
+        digest: &Digest,
+        len: u64,
+    ) -> Result<Repaired, StoreError> {
+        // Without the lock first: an intact or absent object needs nothing
+        // an ordinary publish does not do, and reading a large object must
+        // not hold up every other put.
+        match self.verify(digest)? {
+            Verification::Valid { .. } => {
+                self.publish(temp, digest, len)?;
+                return Ok(Repaired::Intact);
+            }
+            Verification::Missing => {
+                self.publish(temp, digest, len)?;
+                return Ok(Repaired::Stored);
+            }
+            Verification::Corrupt { .. } => {}
+        }
+
+        let dst = self.object_path(digest);
+        temp.file_mut()?.sync_all()?;
+        let lock = File::open(&self.lock_path)?;
+        let outcome = {
+            // Exclusive, so that no put, repair or collector touches the
+            // object between the check and the rename.
+            let _held = ExclusiveLock::acquire(&lock)?;
+            let outcome = match self.verify(digest)? {
+                // Another repair got here first.
+                Verification::Valid { .. } if self.refresh_existing(&dst, len)? => {
+                    return Ok(Repaired::Intact);
+                }
+                Verification::Valid { .. } | Verification::Missing => Repaired::Stored,
+                Verification::Corrupt { reason } => Repaired::Replaced { reason },
+            };
+            temp.file_mut()?.set_modified(self.now())?;
+            temp.close();
+            // Not `rename_into_place`: a damaged file with a plausible
+            // header must not pass for the object being published.
+            rename_over(temp.path(), &dst)?;
+            outcome
+        };
+        temp.disarm();
+        if let Some(shard) = dst.parent() {
+            sync_dir(shard)?;
+        }
+        Ok(outcome)
+    }
+
     /// If `dst` already holds an object of this length, restarts its grace
     /// period and returns true. A file whose header is unreadable or records
     /// another length is damaged and is left for the caller to replace.
@@ -644,24 +812,16 @@ impl ObjectStore for FsStore {
     /// existing one has its grace period restarted. The existing file is
     /// judged by its header only: one with an unreadable header or another
     /// recorded length is replaced, but damage inside the frame is found by
-    /// reading the object or by [`FsStore::verify`], not here.
+    /// reading the object or by [`FsStore::verify`], not here, and is put
+    /// right with [`FsStore::repair`].
     fn put(
         &self,
         reader: &mut dyn Read,
         expected: Option<&Digest>,
     ) -> Result<(Digest, u64), StoreError> {
-        let mut temp = self.create_temp()?;
-        let encoded = format::encode(reader, temp.file_mut()?, self.max_object_bytes)?;
-        if let Some(expected) = expected
-            && *expected != encoded.digest
-        {
-            return Err(StoreError::DigestMismatch {
-                expected: expected.clone(),
-                actual: encoded.digest,
-            });
-        }
-        self.publish(temp, &encoded.digest, encoded.len)?;
-        Ok((encoded.digest, encoded.len))
+        let (temp, digest, len) = self.receive(reader, expected)?;
+        self.publish(temp, &digest, len)?;
+        Ok((digest, len))
     }
 
     /// The reader yields exactly the recorded number of bytes and fails with
@@ -893,6 +1053,27 @@ fn stat(path: &Path) -> io::Result<Option<fs::Metadata>> {
 fn is_older_than(meta: &fs::Metadata, now: SystemTime, grace: Duration) -> io::Result<bool> {
     let age = now.duration_since(meta.modified()?).unwrap_or_default();
     Ok(age >= grace)
+}
+
+/// Renames `temp` onto `dst`, replacing whatever is there.
+fn rename_over(temp: &Path, dst: &Path) -> io::Result<()> {
+    let mut busy_retries = 0u32;
+    loop {
+        match fs::rename(temp, dst) {
+            Ok(()) => return Ok(()),
+            // A scanner or indexer can hold a freshly written file for a
+            // moment on Windows; that clears by itself.
+            Err(error)
+                if cfg!(windows)
+                    && error.kind() == io::ErrorKind::PermissionDenied
+                    && busy_retries < 5 =>
+            {
+                busy_retries += 1;
+                std::thread::sleep(Duration::from_millis(20 * u64::from(busy_retries)));
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn header_matches(path: &Path, len: u64) -> bool {

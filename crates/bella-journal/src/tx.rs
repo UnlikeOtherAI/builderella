@@ -18,6 +18,8 @@ use std::cell::RefCell;
 pub struct Enrollment {
     pub fleet_id: FleetId,
     pub machine_id: MachineId,
+    /// Where the controller is reached. Replaced, together with
+    /// `fingerprint`, by [`JournalTx::set_controller_endpoint`].
     pub controller_url: String,
     /// SHA-256 fingerprint of the fleet certificate pinned at pairing.
     pub fingerprint: String,
@@ -26,7 +28,9 @@ pub struct Enrollment {
     pub policy: MachinePolicy,
 }
 
-/// The part of an enrollment that never changes.
+/// The part of an enrollment that is recorded once. The fleet and the
+/// machine never change; the controller's address and certificate change
+/// only through `set_controller_endpoint`.
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct EnrolledIdentity {
     fleet_id: FleetId,
@@ -157,7 +161,10 @@ impl JournalTx<'_> {
     /// Returns `true` when it was recorded and `false` when the same
     /// identity was already there (the stored policy is then left alone).
     /// A different identity fails with [`JournalError::AlreadyEnrolled`]:
-    /// a journal never changes fleets or machines.
+    /// a journal never changes fleets or machines, and a different
+    /// controller address or fingerprint is not taken from here either;
+    /// that is what [`set_controller_endpoint`](Self::set_controller_endpoint)
+    /// is for.
     pub fn set_enrollment(&self, enrollment: &Enrollment) -> Result<bool> {
         let identity = EnrolledIdentity {
             fleet_id: enrollment.fleet_id.clone(),
@@ -178,6 +185,39 @@ impl JournalTx<'_> {
                 Ok(true)
             }
         }
+    }
+
+    /// Points this worker at the controller's new address and certificate.
+    ///
+    /// For a controller that moved or whose fleet certificate was replaced:
+    /// the worker keeps its machine id and everything it holds, so nothing
+    /// has to be enrolled again. Only `controller_url` and `fingerprint` of
+    /// the [`Enrollment`] change. The fleet, the machine, the policy, the
+    /// connection generation, the known controller epoch, the local control
+    /// settings and every attempt, event and log offset are left as they
+    /// are, and the change is durable when the transaction commits.
+    ///
+    /// Returns `true` when the endpoint changed and `false` when it was
+    /// already this one. Fails with [`JournalError::NotEnrolled`] before
+    /// [`set_enrollment`](Self::set_enrollment).
+    ///
+    /// Nothing here checks that the address is reachable or that the
+    /// fingerprint belongs to the same fleet: the caller pins what it was
+    /// told to pin. The controller still has to accept the machine token,
+    /// which lives outside the journal.
+    pub fn set_controller_endpoint(&self, controller_url: &str, fingerprint: &str) -> Result<bool> {
+        let mut identity = self.enrolled_identity()?.ok_or(JournalError::NotEnrolled)?;
+        if identity.controller_url == controller_url && identity.fingerprint == fingerprint {
+            return Ok(false);
+        }
+        identity.controller_url = controller_url.to_owned();
+        identity.fingerprint = fingerprint.to_owned();
+        let identity = to_json(&identity, "enrollment")?;
+        self.exec(
+            "UPDATE identity SET enrollment = ?1 WHERE id = 1",
+            params![identity],
+        )?;
+        Ok(true)
     }
 
     /// The current machine policy, or `None` before enrollment. Its

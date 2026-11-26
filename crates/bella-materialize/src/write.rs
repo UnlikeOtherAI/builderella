@@ -1,13 +1,14 @@
 //! Writing a manifest's tree into a fresh directory.
 
 use crate::error::MaterializeError;
-use crate::plan::{Node, Resolved, Tree, join_rel};
+use crate::plan::{Node, Tree, join_rel};
 use crate::platform::{base_len, collision_problems, current_os, name_and_length_problems};
 use crate::probe::is_case_sensitive;
 use crate::remove::remove_tree;
 use bella_core::ids::{Digest, DigestWriter};
-use bella_core::snapshot::{Entry, Manifest};
+use bella_core::snapshot::{Entry, LinkDestination, Manifest, ManifestError};
 use bella_core::store::{ObjectStore, StoreError};
+use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -18,11 +19,6 @@ use std::time::{Duration, Instant};
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 /// Most threads a call will use, whatever the options ask for.
 const MAX_THREADS: usize = 64;
-/// Steps granted for resolving all symlinks of a manifest, plus
-/// [`LINK_STEPS_PER_NODE`] per tree node. An ordinary link takes one step
-/// per component of its target.
-const LINK_STEPS_BASE: u64 = 1_000_000;
-const LINK_STEPS_PER_NODE: u64 = 64;
 
 /// Limits and parallelism for one [`materialize`] call.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,7 +115,7 @@ pub fn materialize(
     options: &MaterializeOptions,
 ) -> Result<MaterializeReport, MaterializeError> {
     let started = Instant::now();
-    manifest.validate()?;
+    let followed = manifest.validate_links().map_err(invalid_manifest)?;
     check_limits(manifest, options)?;
 
     // Names and lengths first: this pass is linear in the manifest and
@@ -136,8 +132,7 @@ pub fn materialize(
     }
 
     let tree = Tree::build(manifest, options.max_files)?;
-    let mut link_steps =
-        LINK_STEPS_BASE.saturating_add(LINK_STEPS_PER_NODE.saturating_mul(tree.nodes.len() as u64));
+    let directory_links = directory_links(manifest, &followed);
     let mut dirs: Vec<&str> = Vec::new();
     let mut files: Vec<PlannedFile<'_>> = Vec::new();
     let mut links: Vec<PlannedLink<'_>> = Vec::new();
@@ -158,26 +153,11 @@ pub fn materialize(
                 size,
                 executable,
             }),
-            Node::Link { target, .. } => {
-                let resolved = tree.resolve_link(rel, &mut link_steps);
-                match resolved {
-                    Resolved::Escapes => {
-                        return Err(MaterializeError::SymlinkEscapes {
-                            path: rel.clone(),
-                            target: target.to_string(),
-                        });
-                    }
-                    Resolved::OutOfBudget => {
-                        return Err(MaterializeError::SymlinksTooComplex { path: rel.clone() });
-                    }
-                    Resolved::Dir | Resolved::File | Resolved::Missing | Resolved::Loop => {}
-                }
-                links.push(PlannedLink {
-                    rel,
-                    target,
-                    to_dir: resolved == Resolved::Dir,
-                });
-            }
+            Node::Link { target } => links.push(PlannedLink {
+                rel,
+                target,
+                to_dir: directory_links.contains(rel.as_str()),
+            }),
         }
     }
 
@@ -205,6 +185,56 @@ pub fn materialize(
             }),
         },
     }
+}
+
+/// Turn a validation failure into this crate's error. The two findings
+/// about links followed through each other keep their own variants, with the
+/// link's path made relative to the destination.
+fn invalid_manifest(error: ManifestError) -> MaterializeError {
+    let under = |mount: &str, path: String| {
+        if mount == "." {
+            path
+        } else {
+            format!("{mount}/{path}")
+        }
+    };
+    match error {
+        ManifestError::SymlinkEscapes {
+            mount,
+            path,
+            target,
+        } => MaterializeError::SymlinkEscapes {
+            path: under(&mount, path),
+            target,
+        },
+        ManifestError::SymlinksTooComplex { mount, path } => MaterializeError::SymlinksTooComplex {
+            path: under(&mount, path),
+        },
+        other => MaterializeError::InvalidManifest(other),
+    }
+}
+
+/// Destination-relative paths of the symlinks that lead to a directory of
+/// the manifest. `followed` is what `Manifest::validate_links` returned for
+/// `manifest`.
+fn directory_links(manifest: &Manifest, followed: &[Vec<LinkDestination>]) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    for (root, destinations) in manifest.roots.iter().zip(followed) {
+        let links = root
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry, Entry::Symlink { .. }));
+        for (entry, destination) in links.zip(destinations) {
+            if *destination == LinkDestination::Dir {
+                found.insert(if root.mount == "." {
+                    entry.path().to_string()
+                } else {
+                    format!("{}/{}", root.mount, entry.path())
+                });
+            }
+        }
+    }
+    found
 }
 
 fn check_limits(manifest: &Manifest, options: &MaterializeOptions) -> Result<(), MaterializeError> {

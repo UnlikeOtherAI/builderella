@@ -171,12 +171,21 @@ Common rules are in `AGENTS.md`. Each crate lists the acceptance scenarios
 * `gc(is_live, grace)` deletes unreferenced objects and stale temporaries
   older than `grace`, re-checking liveness immediately before each delete.
   `stats()` reports object count and bytes.
+* A re-put of a stored object reads its header only. `verify(digest)`
+  reads one object in full; `repair(digest, bytes)` and
+  `repair_compressed` replace a stored copy that fails it, and
+  `remove(digest)` deletes one object unconditionally. Both take the
+  publish lock the way `gc` does.
 * Covers: A31 (no temp collision), A36 (corrupt blob rejected), A46 (pinned
   objects survive GC).
 
 ### 6.2 bella-capture
 
-`capture(request, store, barrier) -> CaptureResult { manifest, snapshot_id, meta, stats, excluded }`.
+`capture(roots, policy, store, barrier) -> CaptureResult { manifest,
+snapshot_id, meta, stats, excluded_secrets, warnings }`. `roots` is one
+`RootSpec { path, mount }` per source root, `policy` a `CapturePolicy` and
+`barrier` an optional `CaptureBarrier`. `capture_with_clock` also takes the
+clock that stamps `meta.captured_at`.
 
 * Git roots: enumerate with `git ls-files -z` (tracked, plus untracked
   non-ignored by policy), then read **working-tree bytes**. Never touch the
@@ -195,33 +204,42 @@ Common rules are in `AGENTS.md`. Each crate lists the acceptance scenarios
   explicitly allowed. Git-ignore status alone is never the secret policy.
 * Ignored files are included only when declared; a declared input that is
   missing fails the capture.
-* Symlinks are recorded as links and validated with
-  `bella_core::snapshot::validate_symlink`; escaping or absolute targets
-  fail. Executable bits are recorded (from the git index on Windows).
+* Symlinks are recorded as links. Each target is checked with
+  `bella_core::snapshot::validate_symlink`, and the finished manifest with
+  `Manifest::validate`, which also follows links through each other. An
+  absolute target, a target that leaves its root, and a chain of links
+  that does, all fail the capture with an error naming the link.
+  Executable bits are recorded (from the git index on Windows).
 * Unhydrated LFS pointers, uninitialised submodules and sparse checkouts
   with missing required paths fail with a precise message. Initialised
   submodules are captured from their working trees.
 * Paths that are not valid UTF-8 fail with the offending path; Unicode,
   spaces and newlines in names are preserved exactly.
-* `meta` records Windows incompatibility, case/normalisation collisions and
-  symlink presence so the scheduler can exclude unsuitable executors.
+* `meta` records Windows incompatibility
+  (`bella_core::snapshot::windows_incompatibility`), case/normalisation
+  collisions and symlink presence so the scheduler can exclude unsuitable
+  executors.
 * Multiple roots are captured under one barrier into one manifest.
 * Covers: A26, A27, A28, A29, A30, A31, A32, A33, A34, A35, A37.
 
 ### 6.3 bella-materialize
 
 `materialize(manifest, store, dest, options) -> MaterializeReport`,
-`check_platform(manifest, os, case_sensitive)`, `verify_tree`,
-`remove_tree`.
+`check_platform(manifest, os, case_sensitive)`,
+`verify_tree(manifest, dest)`, `remove_tree(path)`,
+`is_case_sensitive(dir)`.
 
-* Validates the manifest first. `dest` must be absent or empty.
+* Validates the manifest first with `Manifest::validate`, which includes
+  following symlinks through each other; a chain that leaves its root is
+  reported as `SymlinkEscapes`. `dest` must be absent or empty.
 * Files are written with `create_new`, never through a symlink; symlinks
   are created last. Nothing is hard-linked from a cache.
 * Sizes and digests are checked while writing; any failure removes the
   partial tree and returns an error.
-* Windows-incompatible names, over-long paths, case collisions on a
-  case-insensitive volume and unsupported symlinks are precise errors;
-  source is never renamed.
+* Windows-incompatible names (the rules of
+  `bella_core::snapshot::windows_incompatibility`), over-long paths, case
+  collisions on a case-insensitive volume and unsupported symlinks are
+  precise errors; source is never renamed.
 * `remove_tree` never follows links and copes with read-only files.
 * Covers: A27, A28, A29, A36.
 
@@ -245,8 +263,8 @@ command, pinned to the origin platform. File format: `docs/recipes.md`.
 
 ### 6.5 bella-ledger
 
-`Ledger::open(path)` / `open_in_memory()`. Synchronous API; callers use a
-blocking thread. Opening bumps and returns the controller epoch and refuses
+`Ledger::open(path, clock)` / `open_in_memory(clock)`. Synchronous API;
+callers use a blocking thread. Opening bumps and returns the controller epoch and refuses
 a newer schema. Every transition writes its event row in the same
 transaction.
 
@@ -258,8 +276,8 @@ checking, inside the transaction, that the job is queued, has no unresolved
 attempt and that the machine's held reservations plus the request fit the
 capacity the caller passes); `record_offer_reply`; `revoke_offer` (only
 without a start permit); `commit_start`; generation-fenced attempt events;
-exactly-once `record_release`; `request_cancel`; `mark_uncertain`;
-`expire_offers`; retries by retry class; environments and leases; logs
+exactly-once `record_release`; `request_cancel`;
+`mark_machine_uncertain`; `expire_offers`; retries by retry class; environments and leases; logs
 (idempotent append by stream offset, bounded pages by cursor, truncation
 marker); artifacts; `events_after`; queue and fleet queries;
 `reconcile(machine, boot_id, reports) -> verdicts`.
@@ -271,8 +289,9 @@ longer reports is released as `InfraInterrupted` when the boot id changed
 (processes cannot have survived) or when no start permit was delivered;
 otherwise it stays held and uncertain.
 
-`with_transaction` and component-scoped migrations let `bella-cloud` keep
-its tables in the same database.
+`with_transaction` and component-scoped migrations
+(`apply_component_migrations`) let `bella-cloud` keep its tables in the
+same database.
 
 * Covers: A01, A02, A04, A11, A12, A13, A14, A15, A60, A61 at the
   persistence level.
@@ -280,13 +299,18 @@ its tables in the same database.
 ### 6.6 bella-scheduler
 
 Pure: `schedule(&FleetState) -> Schedule { offers, reasons }`,
-`explain`, `plan`. No clock, no I/O; `now` is input.
+`explain(state, job)` for a queued job, `evaluate(state, job)` for one
+that is not queued yet (planning a submission), `job_blocker(state, job)`
+and `effective_capacity(ceiling, budget)`. No clock, no I/O; `now` is
+input.
 
 * Eligibility with permanent versus temporary blockers: platform (origin
   pin, build hosts, test runtime), placement choice, capabilities,
   snapshot/platform incompatibility, project allow-list, LAN-only source,
   machine flags, freshness, capacity `min(ceiling, effective budget) −
-  reserved`, concurrency limits, unresolved previous attempt.
+  reserved`, concurrency limits, unresolved previous attempt. Named tokens
+  follow the capacity rule too: the worker's budget names every token its
+  policy declares, and a token it does not name is not granted.
 * Ordering: weighted service across priority bands so lower bands always
   progress; weighted fair share across projects by dominant reserved share;
   sessions and accounts add no weight; bounded aging.
@@ -300,8 +324,10 @@ Pure: `schedule(&FleetState) -> Schedule { offers, reasons }`,
 
 ### 6.7 bella-probe
 
-`inventory(...)`, `detect_capabilities()`, `Sampler::sample(...) ->
-Telemetry`, `boot_id()`, `hostname()`.
+`inventory(worker_version, executors, previous)` (`inventory_with` adds
+`ProbeOptions`), `detect_capabilities(options)`, `hardware()`, `os_info()`,
+`Sampler::new(work_dir)` with `sample(managed) -> Telemetry`, `boot_id()`,
+`hostname()`.
 
 * Read-only: never changes PATH, selected Xcode, or any installation.
 * Every external probe has a timeout. Missing tools are simply absent.
@@ -321,20 +347,25 @@ containment and each limit and downgrade what did not work.
 
 ### 6.9 bella-journal
 
-`Journal::open(path)`: identity and counters, attempts with validated
+`Journal::open(path, clock)`, and `open_existing` for a tool beside a
+running worker: identity and counters, attempts with validated
 local-state transitions, an event outbox with gap-free sequences and
 acknowledgement, seen-command results for idempotency, log offsets,
 `recover(current_boot)`, `held_resources()`. `synchronous=FULL`, plus a
 reserve file released on disk-full so recovery records can still be
-written.
+written. The enrollment is recorded once; `set_controller_endpoint(url,
+fingerprint)` follows a controller that moved without enrolling again.
 
 * Covers: A11, A13, A16, A17 at the journal level.
 
 ### 6.10 bella-protect
 
 Pure: `budget(input) -> Budget`, `admit(input, request)`,
-`pressure_actions(input, history)`. Implements §4, power and thermal
-rules, pause/drain/boost, and eviction choice with hysteresis.
+`actions(input, history)` (also exported as `pressure_actions`).
+Implements §4, power and thermal rules, pause/drain/boost, and eviction
+choice with hysteresis. `Budget.ceiling` always carries every token the
+policy declares at its declared count, which is what the scheduler's
+capacity check relies on.
 
 * Covers: A04, A05, A06, A07, A08 (no controller input needed), A65.
 
@@ -347,7 +378,7 @@ enrollment string, private-file writes.
 
 ### 6.12 bella-mcp
 
-`serve(stdin, stdout, fleet: Arc<dyn FleetOps>, options)`. Tools:
+`serve(input, output, fleet: Arc<dyn FleetOps>, options)`. Tools:
 `plan_job`, `submit_job`, `get_job`, `wait_job`, `read_logs`, `cancel_job`,
 `get_artifacts`, `get_environment`, `renew_environment`,
 `finish_environment`, `explain_queue`, `list_fleet`.
@@ -355,7 +386,8 @@ enrollment string, private-file writes.
 * A job id comes back quickly; `wait_job` is bounded and a timeout cancels
   nothing. End of input cancels nothing.
 * Workspace paths must be inside the configured allowed roots.
-* Results are compact and bounded; log text is marked untrusted.
+* Results are compact and bounded; log text is marked untrusted. With a
+  dashboard URL configured, job results link to `<url>/#/jobs/<id>`.
 * Covers: A21, A61.
 
 ### 6.13 bella-cloud

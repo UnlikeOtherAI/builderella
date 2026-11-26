@@ -11,5 +11,9 @@ repository.workspace = true
 bella-core.workspace = true
 serde.workspace = true
 
+[dev-dependencies]
+# Only to check that the scheduler and the worker's admission agree.
+bella-protect.workspace = true
+
 [lints]
 workspace = true

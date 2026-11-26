@@ -228,8 +228,6 @@ fn gates(input: &Input, telemetry: &Result<&Telemetry, String>) -> Vec<Gate> {
         ));
     }
 
-    // There is no queue reason code for heat; refusing work on a hot machine
-    // is reported as foreground protection.
     let hot = match sample.thermal {
         ThermalState::Serious => Some("serious"),
         ThermalState::Critical => Some("critical"),
@@ -238,7 +236,7 @@ fn gates(input: &Input, telemetry: &Result<&Telemetry, String>) -> Vec<Gate> {
     if let Some(level) = hot {
         out.push(gate(
             Some(AvailabilityFlag::Overheated),
-            QueueReasonCode::ForegroundProtection,
+            QueueReasonCode::Overheated,
             format!("thermal state is {level}; no new work until the machine cools down"),
         ));
     }
