@@ -58,9 +58,15 @@ impl fmt::Debug for Journal {
     }
 }
 
-fn configure(conn: &Connection, file_backed: bool) -> Result<()> {
+/// Verifies, configures and migrates a freshly opened connection.
+///
+/// The database is inspected before anything is written to it, so a file
+/// that is not a journal, or one from a newer build, is left exactly as it
+/// was, journal mode included.
+fn prepare(conn: &mut Connection, file_backed: bool, upgrade: Upgrade) -> Result<()> {
     conn.busy_timeout(BUSY_TIMEOUT)
         .map_err(JournalError::sqlite)?;
+    schema::inspect(conn, upgrade)?;
     let mode: String = conn
         .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
         .map_err(JournalError::sqlite)?;
@@ -68,7 +74,8 @@ fn configure(conn: &Connection, file_backed: bool) -> Result<()> {
         return Err(JournalError::WalUnavailable(mode));
     }
     conn.execute_batch("PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;")
-        .map_err(JournalError::sqlite)
+        .map_err(JournalError::sqlite)?;
+    schema::migrate(conn, upgrade)
 }
 
 impl Journal {
@@ -87,8 +94,7 @@ impl Journal {
     pub fn open(path: impl AsRef<Path>, clock: Arc<dyn Clock>) -> Result<Self> {
         let path = path.as_ref();
         let mut conn = Connection::open(path).map_err(JournalError::sqlite)?;
-        configure(&conn, true)?;
-        schema::migrate(&mut conn, Upgrade::Apply)?;
+        prepare(&mut conn, true, Upgrade::Apply)?;
         let reserve = ReserveFile::beside(path, RESERVE_BYTES);
         // A full disk must not keep the worker from recovering; the caller
         // sees the missing reserve through `reserve_present`.
@@ -115,8 +121,7 @@ impl Journal {
         let path = path.as_ref();
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let mut conn = Connection::open_with_flags(path, flags).map_err(JournalError::sqlite)?;
-        configure(&conn, true)?;
-        schema::migrate(&mut conn, Upgrade::Refuse)?;
+        prepare(&mut conn, true, Upgrade::Refuse)?;
         Ok(Self::assemble(conn, clock, Some(path.to_owned()), None))
     }
 
@@ -124,8 +129,7 @@ impl Journal {
     /// reserve file. For tests and dry runs.
     pub fn open_in_memory(clock: Arc<dyn Clock>) -> Result<Self> {
         let mut conn = Connection::open_in_memory().map_err(JournalError::sqlite)?;
-        configure(&conn, false)?;
-        schema::migrate(&mut conn, Upgrade::Apply)?;
+        prepare(&mut conn, false, Upgrade::Apply)?;
         Ok(Self::assemble(conn, clock, None, None))
     }
 

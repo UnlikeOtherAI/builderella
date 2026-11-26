@@ -335,11 +335,26 @@ fn a_database_that_is_not_a_journal_is_refused() {
             ),
             "{name}"
         );
+        // Refused without a trace: no journal tables, and not even the
+        // journal mode of the foreign database was changed.
         let raw = rusqlite::Connection::open(&path).unwrap();
-        let tables: i64 = raw
-            .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get(0))
+        let tables: Vec<String> = raw
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(tables, 1, "{name} was not migrated");
+        assert_eq!(tables, vec!["jobs".to_owned()], "{name}");
+        let mode: String = raw
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "delete", "{name}");
+        let application_id: i64 = raw
+            .query_row("PRAGMA application_id", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(application_id, 0, "{name}");
+        assert!(!dir.path().join(format!("{name}.reserve")).exists());
     }
 }
 

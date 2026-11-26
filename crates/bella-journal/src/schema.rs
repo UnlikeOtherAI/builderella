@@ -99,19 +99,17 @@ pub(crate) enum Upgrade {
     Refuse,
 }
 
-/// Brings the database to [`SCHEMA_VERSION`], or fails without changing it.
-pub(crate) fn migrate(conn: &mut Connection, upgrade: Upgrade) -> Result<()> {
-    let tx = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(JournalError::sqlite)?;
-    let application_id: i64 = tx
+/// Checks that the database is a journal this build may open and returns
+/// its schema version. Reads only.
+pub(crate) fn inspect(conn: &Connection, upgrade: Upgrade) -> Result<u32> {
+    let application_id: i64 = conn
         .query_row("PRAGMA application_id", [], |row| row.get(0))
         .map_err(JournalError::sqlite)?;
-    let found: i64 = tx
+    let found: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(JournalError::sqlite)?;
     if application_id == 0 && found == 0 {
-        let objects: i64 = tx
+        let objects: i64 = conn
             .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get(0))
             .map_err(JournalError::sqlite)?;
         if objects != 0 {
@@ -132,6 +130,18 @@ pub(crate) fn migrate(conn: &mut Connection, upgrade: Upgrade) -> Result<()> {
             found,
             supported: SCHEMA_VERSION,
         });
+    }
+    Ok(found)
+}
+
+/// Brings the database to [`SCHEMA_VERSION`], or fails without changing it.
+pub(crate) fn migrate(conn: &mut Connection, upgrade: Upgrade) -> Result<()> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(JournalError::sqlite)?;
+    let found = inspect(&tx, upgrade)?;
+    if found == SCHEMA_VERSION {
+        return Ok(());
     }
     for (version, statements) in MIGRATIONS {
         if *version > found {
