@@ -57,7 +57,11 @@ pub struct ApiError {
 
 impl ApiError {
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
-        Self { code, message: message.into(), details: serde_json::Value::Null }
+        Self {
+            code,
+            message: message.into(),
+            details: serde_json::Value::Null,
+        }
     }
 
     pub fn with_details(mut self, details: serde_json::Value) -> Self {

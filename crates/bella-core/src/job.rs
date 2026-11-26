@@ -13,7 +13,9 @@ use std::collections::BTreeMap;
 
 /// User-visible priority bands. Lower bands keep a guaranteed opportunity:
 /// an endless stream of interactive work must not starve background work.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Priority {
     Maintenance,
@@ -277,7 +279,10 @@ impl JobPhase {
     /// Phases in which an attempt owns a resource reservation.
     pub fn holds_resources(self) -> bool {
         use JobPhase::*;
-        matches!(self, Offered | Preparing | Executing | Collecting | Cleaning | Quarantined)
+        matches!(
+            self,
+            Offered | Preparing | Executing | Collecting | Cleaning | Quarantined
+        )
     }
 }
 
@@ -299,11 +304,17 @@ pub enum Outcome {
         step: Option<String>,
     },
     /// Hit a resource limit; carries peak and limit data.
-    ResourceExhausted { detail: String },
+    ResourceExhausted {
+        detail: String,
+    },
     /// Worker lost, machine slept, cloud interruption, snapshot unavailable.
-    InfraInterrupted { detail: String },
+    InfraInterrupted {
+        detail: String,
+    },
     /// Could never run as specified.
-    Rejected { detail: String },
+    Rejected {
+        detail: String,
+    },
 }
 
 impl Outcome {
@@ -322,7 +333,9 @@ impl Outcome {
 
 /// Progress of cancellation and cleanup. Cancel is a request followed by
 /// observed cleanup, not a declaration that cleanup already happened.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CleanupState {
     #[default]
@@ -396,7 +409,11 @@ pub struct QueueReason {
 
 impl QueueReason {
     pub fn new(code: QueueReasonCode, message: impl Into<String>) -> Self {
-        Self { code, message: message.into(), blockers: Vec::new() }
+        Self {
+            code,
+            message: message.into(),
+            blockers: Vec::new(),
+        }
     }
 }
 
@@ -422,9 +439,17 @@ mod tests {
 
     #[test]
     fn external_side_effects_are_not_retried() {
-        let lost = Outcome::InfraInterrupted { detail: "worker lost".into() };
+        let lost = Outcome::InfraInterrupted {
+            detail: "worker lost".into(),
+        };
         assert!(lost.is_retryable(RetryClass::Pure));
         assert!(!lost.is_retryable(RetryClass::ExternalSideEffects));
-        assert!(!Outcome::Failed { step: None, exit_code: Some(1) }.is_retryable(RetryClass::Pure));
+        assert!(
+            !Outcome::Failed {
+                step: None,
+                exit_code: Some(1)
+            }
+            .is_retryable(RetryClass::Pure)
+        );
     }
 }

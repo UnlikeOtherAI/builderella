@@ -73,7 +73,11 @@ pub enum ManifestError {
     #[error("`{file}` is a file or link but `{child}` is inside it")]
     FileUsedAsDirectory { file: String, child: String },
     #[error("symlink `{path}` -> `{target}`: {reason}")]
-    Symlink { path: String, target: String, reason: String },
+    Symlink {
+        path: String,
+        target: String,
+        reason: String,
+    },
 }
 
 /// Check one relative path: non-empty, `/`-separated, no empty, `.` or `..`
@@ -107,7 +111,10 @@ pub fn validate_symlink(link_path: &str, target: &str) -> Result<(), String> {
     if target.contains('\0') {
         return Err("contains NUL".into());
     }
-    if target.starts_with('/') || target.starts_with('\\') || target.as_bytes().get(1) == Some(&b':') {
+    if target.starts_with('/')
+        || target.starts_with('\\')
+        || target.as_bytes().get(1) == Some(&b':')
+    {
         return Err("absolute target".into());
     }
     // Depth of the directory that contains the link.
@@ -135,7 +142,9 @@ pub fn windows_incompatibility(path: &str) -> Option<String> {
         "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
     for component in path.split('/') {
-        let illegal = |c: &char| matches!(*c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '\\') || (*c as u32) < 32;
+        let illegal = |c: &char| {
+            matches!(*c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '\\') || (*c as u32) < 32
+        };
         if let Some(bad) = component.chars().find(illegal) {
             return Some(format!("`{component}` contains `{}`", bad.escape_default()));
         }
@@ -162,11 +171,11 @@ pub fn find_collisions<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<(Str
     let mut seen: BTreeMap<String, &'a str> = BTreeMap::new();
     let mut collisions = Vec::new();
     for path in paths {
-        if let Some(first) = seen.insert(collision_key(path), path) {
-            if first != path {
-                collisions.push((first.to_string(), path.to_string()));
-                seen.insert(collision_key(path), first);
-            }
+        if let Some(first) = seen.insert(collision_key(path), path)
+            && first != path
+        {
+            collisions.push((first.to_string(), path.to_string()));
+            seen.insert(collision_key(path), first);
         }
     }
     collisions
@@ -175,7 +184,8 @@ pub fn find_collisions<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<(Str
 impl RootManifest {
     /// Sort entries into canonical order.
     pub fn normalize(&mut self) {
-        self.entries.sort_by(|a, b| a.path().as_bytes().cmp(b.path().as_bytes()));
+        self.entries
+            .sort_by(|a, b| a.path().as_bytes().cmp(b.path().as_bytes()));
     }
 }
 
@@ -185,7 +195,10 @@ impl Manifest {
             root.normalize();
         }
         roots.sort_by(|a, b| a.mount.as_bytes().cmp(b.mount.as_bytes()));
-        Self { version: MANIFEST_VERSION, roots }
+        Self {
+            version: MANIFEST_VERSION,
+            roots,
+        }
     }
 
     /// The exact bytes whose digest is the snapshot id.
@@ -239,21 +252,27 @@ impl Manifest {
         }
         let single = self.roots.len() == 1;
         for (i, root) in self.roots.iter().enumerate() {
-            let mount_err = |reason: String| ManifestError::Mount { mount: root.mount.clone(), reason };
+            let mount_err = |reason: String| ManifestError::Mount {
+                mount: root.mount.clone(),
+                reason,
+            };
             if root.mount == "." {
                 if !single {
-                    return Err(mount_err("`.` is only valid for a single-root snapshot".into()));
+                    return Err(mount_err(
+                        "`.` is only valid for a single-root snapshot".into(),
+                    ));
                 }
             } else {
                 validate_rel_path(&root.mount).map_err(mount_err)?;
             }
-            if let Some(prev) = i.checked_sub(1).map(|p| &self.roots[p]) {
-                if prev.mount.as_bytes() >= root.mount.as_bytes() {
-                    return Err(mount_err("mounts are not sorted and unique".into()));
-                }
+            if let Some(prev) = i.checked_sub(1).map(|p| &self.roots[p])
+                && prev.mount.as_bytes() >= root.mount.as_bytes()
+            {
+                return Err(mount_err("mounts are not sorted and unique".into()));
             }
             for other in &self.roots {
-                if other.mount != root.mount && root.mount.starts_with(&format!("{}/", other.mount)) {
+                if other.mount != root.mount && root.mount.starts_with(&format!("{}/", other.mount))
+                {
                     return Err(mount_err(format!("nested inside mount `{}`", other.mount)));
                 }
             }
@@ -270,8 +289,10 @@ impl RootManifest {
         let mut leaves: BTreeSet<&str> = BTreeSet::new();
         for entry in &self.entries {
             let path = entry.path();
-            validate_rel_path(path)
-                .map_err(|reason| ManifestError::Path { path: path.to_string(), reason })?;
+            validate_rel_path(path).map_err(|reason| ManifestError::Path {
+                path: path.to_string(),
+                reason,
+            })?;
             if previous.is_some_and(|p| p.as_bytes() >= path.as_bytes()) {
                 return Err(ManifestError::Unsorted(path.to_string()));
             }
@@ -367,11 +388,19 @@ mod tests {
     use super::*;
 
     fn file(path: &str) -> Entry {
-        Entry::File { path: path.into(), digest: Digest::of_bytes(path.as_bytes()), size: 1, executable: false }
+        Entry::File {
+            path: path.into(),
+            digest: Digest::of_bytes(path.as_bytes()),
+            size: 1,
+            executable: false,
+        }
     }
 
     fn manifest(entries: Vec<Entry>) -> Manifest {
-        Manifest::new(vec![RootManifest { mount: ".".into(), entries }])
+        Manifest::new(vec![RootManifest {
+            mount: ".".into(),
+            entries,
+        }])
     }
 
     #[test]
@@ -393,17 +422,30 @@ mod tests {
             executable: true,
         }]);
         assert_ne!(plain.id(), exec.id());
-        let link_a = manifest(vec![Entry::Symlink { path: "l".into(), target: "a".into() }]);
-        let link_b = manifest(vec![Entry::Symlink { path: "l".into(), target: "b".into() }]);
+        let link_a = manifest(vec![Entry::Symlink {
+            path: "l".into(),
+            target: "a".into(),
+        }]);
+        let link_b = manifest(vec![Entry::Symlink {
+            path: "l".into(),
+            target: "b".into(),
+        }]);
         assert_ne!(link_a.id(), link_b.id());
     }
 
     #[test]
     fn traversal_and_absolute_paths_are_rejected() {
         for bad in ["../x", "a/../b", "/etc/passwd", "a//b", "a/./b", "", "a\0b"] {
-            assert!(manifest(vec![file(bad)]).validate().is_err(), "{bad:?} should be rejected");
+            assert!(
+                manifest(vec![file(bad)]).validate().is_err(),
+                "{bad:?} should be rejected"
+            );
         }
-        assert!(manifest(vec![file("dir/ünï côdé/new\nline")]).validate().is_ok());
+        assert!(
+            manifest(vec![file("dir/ünï côdé/new\nline")])
+                .validate()
+                .is_ok()
+        );
     }
 
     #[test]
@@ -418,7 +460,10 @@ mod tests {
     #[test]
     fn a_file_cannot_also_be_a_directory() {
         let m = manifest(vec![file("a"), file("a/b")]);
-        assert!(matches!(m.validate(), Err(ManifestError::FileUsedAsDirectory { .. })));
+        assert!(matches!(
+            m.validate(),
+            Err(ManifestError::FileUsedAsDirectory { .. })
+        ));
     }
 
     #[test]
@@ -428,7 +473,10 @@ mod tests {
         assert!(matches!(m.validate(), Err(ManifestError::Unsorted(_))));
         let dup = Manifest {
             version: MANIFEST_VERSION,
-            roots: vec![RootManifest { mount: ".".into(), entries: vec![file("a"), file("a")] }],
+            roots: vec![RootManifest {
+                mount: ".".into(),
+                entries: vec![file("a"), file("a")],
+            }],
         };
         assert!(dup.validate().is_err());
     }
@@ -443,20 +491,38 @@ mod tests {
 
     #[test]
     fn case_and_normalization_collisions() {
-        let found = find_collisions(["README.md", "readme.md", "caf\u{e9}", "cafe\u{301}", "other"]);
+        let found = find_collisions([
+            "README.md",
+            "readme.md",
+            "caf\u{e9}",
+            "cafe\u{301}",
+            "other",
+        ]);
         assert_eq!(found.len(), 2);
     }
 
     #[test]
     fn multi_root_mounts() {
         let two = Manifest::new(vec![
-            RootManifest { mount: "libs/shared".into(), entries: vec![file("a")] },
-            RootManifest { mount: "app".into(), entries: vec![file("a")] },
+            RootManifest {
+                mount: "libs/shared".into(),
+                entries: vec![file("a")],
+            },
+            RootManifest {
+                mount: "app".into(),
+                entries: vec![file("a")],
+            },
         ]);
         assert!(two.validate().is_ok());
         let nested = Manifest::new(vec![
-            RootManifest { mount: "app".into(), entries: vec![] },
-            RootManifest { mount: "app/lib".into(), entries: vec![] },
+            RootManifest {
+                mount: "app".into(),
+                entries: vec![],
+            },
+            RootManifest {
+                mount: "app/lib".into(),
+                entries: vec![],
+            },
         ]);
         assert!(nested.validate().is_err());
     }

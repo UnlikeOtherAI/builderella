@@ -44,11 +44,13 @@ use crate::ids::{
     ProjectId, SessionId, SnapshotId,
 };
 use crate::job::{
-    CleanupState, CloudMode, JobPhase, JobSpec, MachineBlocker, Outcome, Priority, QueueReason, StepKind,
+    CleanupState, CloudMode, JobPhase, JobSpec, MachineBlocker, Outcome, Priority, QueueReason,
+    StepKind,
 };
 use crate::lease::Lease;
 use crate::machine::{
-    AvailabilityFlag, Inventory, LocalControl, MachineLifecycle, MachinePolicy, MachineProfile, Telemetry,
+    AvailabilityFlag, Inventory, LocalControl, MachineLifecycle, MachinePolicy, MachineProfile,
+    Telemetry,
 };
 use crate::platform::Platform;
 use crate::protocol::{ArtifactKind, Endpoint, LogStream, StepState, UsageSummary};

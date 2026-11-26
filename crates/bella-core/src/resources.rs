@@ -32,11 +32,20 @@ pub struct Shortfall {
 }
 
 impl ResourceVector {
-    pub const ZERO: ResourceVector =
-        ResourceVector { cpu_milli: 0, memory_bytes: 0, disk_bytes: 0, tokens: BTreeMap::new() };
+    pub const ZERO: ResourceVector = ResourceVector {
+        cpu_milli: 0,
+        memory_bytes: 0,
+        disk_bytes: 0,
+        tokens: BTreeMap::new(),
+    };
 
     pub fn new(cpu_milli: u64, memory_bytes: u64, disk_bytes: u64) -> Self {
-        Self { cpu_milli, memory_bytes, disk_bytes, tokens: BTreeMap::new() }
+        Self {
+            cpu_milli,
+            memory_bytes,
+            disk_bytes,
+            tokens: BTreeMap::new(),
+        }
     }
 
     pub fn with_token(mut self, name: impl Into<String>, count: u64) -> Self {
@@ -144,7 +153,11 @@ impl ResourceVector {
         ];
         for (dimension, requested, available) in dims {
             if requested > available {
-                return Some(Shortfall { dimension: dimension.to_string(), requested, available });
+                return Some(Shortfall {
+                    dimension: dimension.to_string(),
+                    requested,
+                    available,
+                });
             }
         }
         for (name, requested) in &self.tokens {
@@ -175,7 +188,11 @@ pub struct ResourceEnvelope {
 impl ResourceEnvelope {
     /// An envelope with no growth room.
     pub fn fixed(v: ResourceVector) -> Self {
-        Self { initial: v.clone(), peak: v.clone(), maximum: v }
+        Self {
+            initial: v.clone(),
+            peak: v.clone(),
+            maximum: v,
+        }
     }
 
     /// `initial <= peak <= maximum` in every dimension.
@@ -239,7 +256,10 @@ mod tests {
         let ok = ResourceVector::new(4000, 8 << 30, 1 << 30).with_token("gpu", 1);
         assert!(ok.fits_within(&cap));
         let too_much = ok.clone().with_token("gpu", 2);
-        assert_eq!(too_much.first_shortfall(&cap).unwrap().dimension, "token:gpu");
+        assert_eq!(
+            too_much.first_shortfall(&cap).unwrap().dimension,
+            "token:gpu"
+        );
         let unknown = ok.clone().with_token("ios-simulator", 1);
         assert_eq!(unknown.first_shortfall(&cap).unwrap().available, 0);
     }
@@ -256,6 +276,9 @@ mod tests {
         let build = ResourceVector::new(8000, 4 << 30, 0);
         let test = ResourceVector::new(2000, 8 << 30, 0).with_token("gui-session", 1);
         let peak = build.max(&test);
-        assert_eq!(peak, ResourceVector::new(8000, 8 << 30, 0).with_token("gui-session", 1));
+        assert_eq!(
+            peak,
+            ResourceVector::new(8000, 8 << 30, 0).with_token("gui-session", 1)
+        );
     }
 }

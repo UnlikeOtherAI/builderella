@@ -25,7 +25,10 @@ fn parse(version: &str) -> Vec<u64> {
 pub fn compare(a: &str, b: &str) -> Ordering {
     let (a, b) = (parse(a), parse(b));
     for i in 0..a.len().max(b.len()) {
-        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        let (x, y) = (
+            a.get(i).copied().unwrap_or(0),
+            b.get(i).copied().unwrap_or(0),
+        );
         match x.cmp(&y) {
             Ordering::Equal => continue,
             other => return other,
@@ -41,21 +44,26 @@ fn has_prefix(version: &str, prefix: &str) -> bool {
 
 /// Does `version` satisfy `requirement`? An empty requirement always holds.
 pub fn satisfies(version: &str, requirement: &str) -> bool {
-    requirement.split(',').map(str::trim).filter(|term| !term.is_empty()).all(|term| {
-        let ops: [(&str, fn(Ordering) -> bool); 5] = [
-            (">=", |o| o != Ordering::Less),
-            ("<=", |o| o != Ordering::Greater),
-            (">", |o| o == Ordering::Greater),
-            ("<", |o| o == Ordering::Less),
-            ("=", |o| o == Ordering::Equal),
-        ];
-        for (op, accept) in ops {
-            if let Some(rest) = term.strip_prefix(op) {
-                return accept(compare(version, rest.trim()));
+    requirement
+        .split(',')
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .all(|term| {
+            type Accept = fn(Ordering) -> bool;
+            let ops: [(&str, Accept); 5] = [
+                (">=", |o| o != Ordering::Less),
+                ("<=", |o| o != Ordering::Greater),
+                (">", |o| o == Ordering::Greater),
+                ("<", |o| o == Ordering::Less),
+                ("=", |o| o == Ordering::Equal),
+            ];
+            for (op, accept) in ops {
+                if let Some(rest) = term.strip_prefix(op) {
+                    return accept(compare(version, rest.trim()));
+                }
             }
-        }
-        has_prefix(version, term)
-    })
+            has_prefix(version, term)
+        })
 }
 
 #[cfg(test)]

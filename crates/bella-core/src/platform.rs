@@ -107,8 +107,13 @@ impl fmt::Display for Platform {
 impl FromStr for Platform {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, String> {
-        let (os, arch) = s.split_once('-').ok_or_else(|| format!("expected `os-arch`, got `{s}`"))?;
-        Ok(Self { os: os.parse()?, arch: arch.parse()? })
+        let (os, arch) = s
+            .split_once('-')
+            .ok_or_else(|| format!("expected `os-arch`, got `{s}`"))?;
+        Ok(Self {
+            os: os.parse()?,
+            arch: arch.parse()?,
+        })
     }
 }
 
@@ -126,17 +131,27 @@ pub struct PlatformSelector {
 
 impl PlatformSelector {
     pub fn os(os: Os) -> Self {
-        Self { os: Some(os), ..Self::default() }
+        Self {
+            os: Some(os),
+            ..Self::default()
+        }
     }
 
     pub fn exact(platform: Platform) -> Self {
-        Self { os: Some(platform.os), arch: Some(platform.arch), os_version: None }
+        Self {
+            os: Some(platform.os),
+            arch: Some(platform.arch),
+            os_version: None,
+        }
     }
 
     pub fn matches(&self, platform: Platform, os_version: &str) -> bool {
         self.os.is_none_or(|os| os == platform.os)
             && self.arch.is_none_or(|arch| arch == platform.arch)
-            && self.os_version.as_deref().is_none_or(|req| version::satisfies(os_version, req))
+            && self
+                .os_version
+                .as_deref()
+                .is_none_or(|req| version::satisfies(os_version, req))
     }
 }
 
@@ -197,10 +212,23 @@ pub struct CapabilityRequirement {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CapabilityMismatch {
-    Missing { name: String },
-    NotUsable { name: String, state: CapabilityState },
-    WrongVersion { name: String, have: String, need: String },
-    MissingAttribute { name: String, attribute: String, need: String },
+    Missing {
+        name: String,
+    },
+    NotUsable {
+        name: String,
+        state: CapabilityState,
+    },
+    WrongVersion {
+        name: String,
+        have: String,
+        need: String,
+    },
+    MissingAttribute {
+        name: String,
+        attribute: String,
+        need: String,
+    },
 }
 
 impl fmt::Display for CapabilityMismatch {
@@ -211,7 +239,11 @@ impl fmt::Display for CapabilityMismatch {
             Self::WrongVersion { name, have, need } => {
                 write!(f, "`{name}` {have} does not satisfy `{need}`")
             }
-            Self::MissingAttribute { name, attribute, need } => {
+            Self::MissingAttribute {
+                name,
+                attribute,
+                need,
+            } => {
                 write!(f, "`{name}` lacks {attribute} `{need}`")
             }
         }
@@ -220,17 +252,27 @@ impl fmt::Display for CapabilityMismatch {
 
 impl CapabilityRequirement {
     pub fn named(name: impl Into<String>) -> Self {
-        Self { name: name.into(), version: None, attributes: BTreeMap::new() }
+        Self {
+            name: name.into(),
+            version: None,
+            attributes: BTreeMap::new(),
+        }
     }
 
     /// Check this requirement against a machine's capability inventory.
     pub fn check(&self, capabilities: &[Capability]) -> Result<(), CapabilityMismatch> {
-        let candidates: Vec<&Capability> =
-            capabilities.iter().filter(|c| c.name == self.name).collect();
+        let candidates: Vec<&Capability> = capabilities
+            .iter()
+            .filter(|c| c.name == self.name)
+            .collect();
         if candidates.is_empty() {
-            return Err(CapabilityMismatch::Missing { name: self.name.clone() });
+            return Err(CapabilityMismatch::Missing {
+                name: self.name.clone(),
+            });
         }
-        let mut last = CapabilityMismatch::Missing { name: self.name.clone() };
+        let mut last = CapabilityMismatch::Missing {
+            name: self.name.clone(),
+        };
         for cap in candidates {
             match self.check_one(cap) {
                 Ok(()) => return Ok(()),
@@ -242,7 +284,10 @@ impl CapabilityRequirement {
 
     fn check_one(&self, cap: &Capability) -> Result<(), CapabilityMismatch> {
         if cap.state != CapabilityState::Installed {
-            return Err(CapabilityMismatch::NotUsable { name: cap.name.clone(), state: cap.state });
+            return Err(CapabilityMismatch::NotUsable {
+                name: cap.name.clone(),
+                state: cap.state,
+            });
         }
         if let Some(need) = &self.version {
             let have = cap.version.clone().unwrap_or_default();
@@ -255,7 +300,11 @@ impl CapabilityRequirement {
             }
         }
         for (attribute, need) in &self.attributes {
-            let have = cap.attributes.get(attribute).map(String::as_str).unwrap_or("");
+            let have = cap
+                .attributes
+                .get(attribute)
+                .map(String::as_str)
+                .unwrap_or("");
             if !have.split(',').any(|item| item.trim() == need) {
                 return Err(CapabilityMismatch::MissingAttribute {
                     name: cap.name.clone(),
@@ -269,7 +318,9 @@ impl CapabilityRequirement {
 }
 
 /// Isolation an attempt requires from its executor.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum IsolationLevel {
     /// Native processes in a managed scope. For trusted code.
@@ -310,12 +361,20 @@ pub enum PlacementChoice {
     #[default]
     Any,
     /// Use it when feasible; otherwise fall back within the recipe's set.
-    Prefer { platform: PlatformSelector },
+    Prefer {
+        platform: PlatformSelector,
+    },
     /// Hard constraint; never silently substituted.
-    Require { platform: PlatformSelector },
+    Require {
+        platform: PlatformSelector,
+    },
     /// A machine id or its unique display name.
-    Machine { machine: String },
-    Pool { pool: String },
+    Machine {
+        machine: String,
+    },
+    Pool {
+        pool: String,
+    },
 }
 
 #[cfg(test)]
@@ -334,15 +393,28 @@ mod tests {
     #[test]
     fn platform_text_round_trips() {
         let p: Platform = "macos-arm64".parse().unwrap();
-        assert_eq!(p, Platform { os: Os::Macos, arch: Arch::Aarch64 });
+        assert_eq!(
+            p,
+            Platform {
+                os: Os::Macos,
+                arch: Arch::Aarch64
+            }
+        );
         assert_eq!(p.to_string(), "macos-aarch64");
         assert!("plan9-x86_64".parse::<Platform>().is_err());
     }
 
     #[test]
     fn selector_checks_os_version() {
-        let sel = PlatformSelector { os: Some(Os::Macos), arch: None, os_version: Some(">=14".into()) };
-        let mac = Platform { os: Os::Macos, arch: Arch::X86_64 };
+        let sel = PlatformSelector {
+            os: Some(Os::Macos),
+            arch: None,
+            os_version: Some(">=14".into()),
+        };
+        let mac = Platform {
+            os: Os::Macos,
+            arch: Arch::X86_64,
+        };
         assert!(!sel.matches(mac, "12.7.6"));
         assert!(sel.matches(mac, "15.1"));
     }
@@ -350,8 +422,15 @@ mod tests {
     #[test]
     fn requirement_explains_the_mismatch() {
         let caps = vec![cap("xcode", "14.2"), cap("rust", "1.89.0")];
-        let need = CapabilityRequirement { name: "xcode".into(), version: Some(">=16".into()), attributes: BTreeMap::new() };
-        assert!(matches!(need.check(&caps), Err(CapabilityMismatch::WrongVersion { .. })));
+        let need = CapabilityRequirement {
+            name: "xcode".into(),
+            version: Some(">=16".into()),
+            attributes: BTreeMap::new(),
+        };
+        assert!(matches!(
+            need.check(&caps),
+            Err(CapabilityMismatch::WrongVersion { .. })
+        ));
         assert!(matches!(
             CapabilityRequirement::named("jdk").check(&caps),
             Err(CapabilityMismatch::Missing { .. })
@@ -362,7 +441,11 @@ mod tests {
     #[test]
     fn any_installed_version_can_satisfy() {
         let caps = vec![cap("jdk", "17.0.9"), cap("jdk", "21.0.4")];
-        let need = CapabilityRequirement { name: "jdk".into(), version: Some("21".into()), attributes: BTreeMap::new() };
+        let need = CapabilityRequirement {
+            name: "jdk".into(),
+            version: Some("21".into()),
+            attributes: BTreeMap::new(),
+        };
         assert!(need.check(&caps).is_ok());
     }
 }

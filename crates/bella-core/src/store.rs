@@ -30,7 +30,11 @@ pub trait ObjectStore: Send + Sync {
     /// Store everything `reader` yields and return the digest and length of
     /// the bytes actually retained. With `expected`, a mismatch publishes
     /// nothing. Publication is atomic: a reader never sees a partial object.
-    fn put(&self, reader: &mut dyn Read, expected: Option<&Digest>) -> Result<(Digest, u64), StoreError>;
+    fn put(
+        &self,
+        reader: &mut dyn Read,
+        expected: Option<&Digest>,
+    ) -> Result<(Digest, u64), StoreError>;
 
     /// Open an object for reading. The returned reader fails with
     /// `InvalidData` at end of stream if the content does not match `digest`.
@@ -61,7 +65,11 @@ pub struct VerifyingReader<R> {
 
 impl<R: Read> VerifyingReader<R> {
     pub fn new(inner: R, expected: Digest) -> Self {
-        Self { inner, expected, hasher: Some(DigestWriter::new()) }
+        Self {
+            inner,
+            expected,
+            hasher: Some(DigestWriter::new()),
+        }
     }
 }
 
@@ -125,14 +133,21 @@ impl ObjectStore for MemStore {
         Ok(self.objects.lock().unwrap().contains_key(digest))
     }
 
-    fn put(&self, reader: &mut dyn Read, expected: Option<&Digest>) -> Result<(Digest, u64), StoreError> {
+    fn put(
+        &self,
+        reader: &mut dyn Read,
+        expected: Option<&Digest>,
+    ) -> Result<(Digest, u64), StoreError> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes)?;
         let actual = Digest::of_bytes(&bytes);
-        if let Some(expected) = expected {
-            if *expected != actual {
-                return Err(StoreError::DigestMismatch { expected: expected.clone(), actual });
-            }
+        if let Some(expected) = expected
+            && *expected != actual
+        {
+            return Err(StoreError::DigestMismatch {
+                expected: expected.clone(),
+                actual,
+            });
         }
         let len = bytes.len() as u64;
         self.objects.lock().unwrap().insert(actual.clone(), bytes);
@@ -147,11 +162,19 @@ impl ObjectStore for MemStore {
             .get(digest)
             .cloned()
             .ok_or_else(|| StoreError::NotFound(digest.clone()))?;
-        Ok(Box::new(VerifyingReader::new(io::Cursor::new(bytes), digest.clone())))
+        Ok(Box::new(VerifyingReader::new(
+            io::Cursor::new(bytes),
+            digest.clone(),
+        )))
     }
 
     fn size(&self, digest: &Digest) -> Result<Option<u64>, StoreError> {
-        Ok(self.objects.lock().unwrap().get(digest).map(|b| b.len() as u64))
+        Ok(self
+            .objects
+            .lock()
+            .unwrap()
+            .get(digest)
+            .map(|b| b.len() as u64))
     }
 }
 

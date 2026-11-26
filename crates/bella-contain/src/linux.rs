@@ -9,7 +9,9 @@ pub struct CgroupV2;
 impl CgroupV2 {
     /// `Err(Unavailable)` when no writable, delegated cgroup v2 subtree exists.
     pub fn detect() -> Result<Self, ContainError> {
-        Err(ContainError::Unavailable("cgroup v2 adapter is not implemented yet".into()))
+        Err(ContainError::Unavailable(
+            "cgroup v2 adapter is not implemented yet".into(),
+        ))
     }
 }
 

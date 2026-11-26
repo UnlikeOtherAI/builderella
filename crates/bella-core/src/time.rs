@@ -10,13 +10,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Milliseconds since the Unix epoch, UTC.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct UnixMillis(pub u64);
 
 impl UnixMillis {
     pub fn now() -> Self {
-        let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        let d = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         Self(d.as_millis() as u64)
     }
 

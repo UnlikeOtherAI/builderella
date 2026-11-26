@@ -30,13 +30,22 @@ pub enum LeaseEnd {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RenewError {
     /// The environment already reached its absolute maximum lifetime.
-    MaxLifetimeReached { hard_deadline: UnixMillis },
-    AlreadyExpired { reason: LeaseEnd },
+    MaxLifetimeReached {
+        hard_deadline: UnixMillis,
+    },
+    AlreadyExpired {
+        reason: LeaseEnd,
+    },
 }
 
 impl Lease {
     pub fn start(spec: LeaseSpec, now: UnixMillis) -> Self {
-        let mut lease = Self { spec, created_at: now, last_activity_at: now, lease_until: now };
+        let mut lease = Self {
+            spec,
+            created_at: now,
+            last_activity_at: now,
+            lease_until: now,
+        };
         lease.lease_until = lease.clamp(now.plus_secs(spec.lease_secs));
         lease
     }
@@ -73,9 +82,9 @@ impl Lease {
     /// which is only ever reported after it has been applied.
     pub fn renew(&mut self, now: UnixMillis) -> Result<UnixMillis, RenewError> {
         match self.ended(now) {
-            Some(LeaseEnd::MaxLifetime) => {
-                Err(RenewError::MaxLifetimeReached { hard_deadline: self.hard_deadline() })
-            }
+            Some(LeaseEnd::MaxLifetime) => Err(RenewError::MaxLifetimeReached {
+                hard_deadline: self.hard_deadline(),
+            }),
             Some(reason) => Err(RenewError::AlreadyExpired { reason }),
             None => {
                 self.last_activity_at = now;
@@ -98,14 +107,21 @@ mod tests {
     use super::*;
 
     fn spec() -> LeaseSpec {
-        LeaseSpec { idle_timeout_secs: 900, lease_secs: 1800, max_lifetime_secs: 14_400 }
+        LeaseSpec {
+            idle_timeout_secs: 900,
+            lease_secs: 1800,
+            max_lifetime_secs: 14_400,
+        }
     }
 
     #[test]
     fn idle_timeout_ends_an_unused_environment() {
         let lease = Lease::start(spec(), UnixMillis(0));
         assert_eq!(lease.ended(UnixMillis(899_000)), None);
-        assert_eq!(lease.ended(UnixMillis(900_000)), Some(LeaseEnd::IdleTimeout));
+        assert_eq!(
+            lease.ended(UnixMillis(900_000)),
+            Some(LeaseEnd::IdleTimeout)
+        );
     }
 
     #[test]
@@ -114,7 +130,10 @@ mod tests {
         for minute in 1..30 {
             lease.touch(UnixMillis(minute * 60_000));
         }
-        assert_eq!(lease.ended(UnixMillis(1_800_000)), Some(LeaseEnd::LeaseExpired));
+        assert_eq!(
+            lease.ended(UnixMillis(1_800_000)),
+            Some(LeaseEnd::LeaseExpired)
+        );
     }
 
     #[test]
@@ -128,7 +147,10 @@ mod tests {
             }
         }
         assert!(now.0 >= 14_400_000);
-        assert!(matches!(lease.renew(now), Err(RenewError::MaxLifetimeReached { .. })));
+        assert!(matches!(
+            lease.renew(now),
+            Err(RenewError::MaxLifetimeReached { .. })
+        ));
         assert_eq!(lease.effective_deadline(), UnixMillis(14_400_000));
     }
 
@@ -137,7 +159,9 @@ mod tests {
         let mut lease = Lease::start(spec(), UnixMillis(0));
         assert!(matches!(
             lease.renew(UnixMillis(1_000_000)),
-            Err(RenewError::AlreadyExpired { reason: LeaseEnd::IdleTimeout })
+            Err(RenewError::AlreadyExpired {
+                reason: LeaseEnd::IdleTimeout
+            })
         ));
     }
 }

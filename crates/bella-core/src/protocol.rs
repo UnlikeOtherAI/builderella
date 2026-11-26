@@ -21,7 +21,9 @@
 //! * After reconnecting, a worker receives no new offer until its previous
 //!   attempts are reconciled.
 
-use crate::ids::{AttemptId, BootId, CommandId, Digest, FleetId, JobId, MachineId, ProjectId, SnapshotId};
+use crate::ids::{
+    AttemptId, BootId, CommandId, Digest, FleetId, JobId, MachineId, ProjectId, SnapshotId,
+};
 use crate::job::{CleanupState, JobSpec, Outcome, QueueReasonCode};
 use crate::machine::{AvailabilityFlag, Inventory, LocalControl, MachinePolicy, Telemetry};
 use crate::resources::ResourceVector;
@@ -113,21 +115,45 @@ pub struct ReconcileVerdict {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControllerCommand {
-    Offer { offer: Box<Offer> },
+    Offer {
+        offer: Box<Offer>,
+    },
     /// Run a previously accepted offer. Retransmission for the same attempt
     /// must not launch a second copy.
-    Start { attempt: AttemptRef, authority: ExecutionAuthority },
+    Start {
+        attempt: AttemptRef,
+        authority: ExecutionAuthority,
+    },
     /// Withdraw an offer that has no start permit.
-    Revoke { attempt: AttemptRef, reason: String },
-    RenewAuthority { attempt: AttemptRef, authority: ExecutionAuthority },
+    Revoke {
+        attempt: AttemptRef,
+        reason: String,
+    },
+    RenewAuthority {
+        attempt: AttemptRef,
+        authority: ExecutionAuthority,
+    },
     /// Stop the attempt: polite termination, `grace_secs`, forced cleanup.
-    Cancel { attempt: AttemptRef, reason: String, grace_secs: u64 },
+    Cancel {
+        attempt: AttemptRef,
+        reason: String,
+        grace_secs: u64,
+    },
     /// End a retained environment and run cleanup.
-    FinishEnvironment { attempt: AttemptRef, reason: String },
-    UpdatePolicy { policy: MachinePolicy },
-    SetDrain { draining: bool },
+    FinishEnvironment {
+        attempt: AttemptRef,
+        reason: String,
+    },
+    UpdatePolicy {
+        policy: MachinePolicy,
+    },
+    SetDrain {
+        draining: bool,
+    },
     /// Sent once after `Hello`, before any new offer.
-    Reconcile { verdicts: Vec<ReconcileVerdict> },
+    Reconcile {
+        verdicts: Vec<ReconcileVerdict>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,14 +176,28 @@ pub enum ControllerMsg {
         server_time: UnixMillis,
         heartbeat_interval_ms: u64,
     },
-    Command { envelope: CommandEnvelope },
+    Command {
+        envelope: CommandEnvelope,
+    },
     /// Attempt events up to and including `through_seq` are durable.
-    EventsAcked { attempt_id: AttemptId, through_seq: u64 },
+    EventsAcked {
+        attempt_id: AttemptId,
+        through_seq: u64,
+    },
     /// Log bytes of one stream up to `through_offset` are durable.
-    LogsAcked { attempt_id: AttemptId, step: String, stream: LogStream, through_offset: u64 },
-    Ping { nonce: u64 },
+    LogsAcked {
+        attempt_id: AttemptId,
+        step: String,
+        stream: LogStream,
+        through_offset: u64,
+    },
+    Ping {
+        nonce: u64,
+    },
     /// The controller is about to close the connection, with the reason.
-    Close { reason: String },
+    Close {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,7 +206,10 @@ pub enum CommandResult {
     Applied,
     /// Seen before; the earlier result stands.
     Duplicate,
-    Rejected { code: RejectCode, message: String },
+    Rejected {
+        code: RejectCode,
+        message: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -187,7 +230,10 @@ pub enum RejectCode {
 pub enum OfferDecision {
     /// Resources are held locally. Nothing has been executed.
     Accepted,
-    Rejected { code: QueueReasonCode, message: String },
+    Rejected {
+        code: QueueReasonCode,
+        message: String,
+    },
 }
 
 /// What the worker's journal says about an attempt.
@@ -337,7 +383,9 @@ pub enum AttemptEvent {
     /// Start authorised; materializing the snapshot.
     Preparing,
     /// The first managed process exists.
-    Started { scope: ScopeIdentity },
+    Started {
+        scope: ScopeIdentity,
+    },
     StepChanged {
         step: String,
         state: StepState,
@@ -346,16 +394,33 @@ pub enum AttemptEvent {
     },
     /// All services are ready and the non-service steps finished; the
     /// attempt is now held as an environment.
-    EnvironmentReady { endpoints: Vec<Endpoint> },
+    EnvironmentReady {
+        endpoints: Vec<Endpoint>,
+    },
     Collecting,
     /// The object is durably in the object store.
-    ArtifactPublished { path: String, kind: ArtifactKind, digest: Digest, size: u64 },
+    ArtifactPublished {
+        path: String,
+        kind: ArtifactKind,
+        digest: Digest,
+        size: u64,
+    },
     /// The result. Capacity is still held until `Released`.
-    Exited { outcome: Outcome, usage: UsageSummary },
-    Cleanup { state: CleanupState, detail: String },
-    Released { proof: ReleaseProof },
+    Exited {
+        outcome: Outcome,
+        usage: UsageSummary,
+    },
+    Cleanup {
+        state: CleanupState,
+        detail: String,
+    },
+    Released {
+        proof: ReleaseProof,
+    },
     /// Cleanup could not be verified; the capacity stays held.
-    Quarantined { reason: String },
+    Quarantined {
+        reason: String,
+    },
 }
 
 /// One journaled event of an attempt. `seq` starts at 1 and has no gaps;
@@ -386,14 +451,31 @@ pub enum WorkerMsg {
         /// acknowledged, for reconciliation.
         attempts: Vec<AttemptReport>,
     },
-    Heartbeat { heartbeat: Box<Heartbeat> },
-    OfferReply { command_id: CommandId, attempt: AttemptRef, decision: OfferDecision },
-    CommandAck { command_id: CommandId, result: CommandResult },
-    AttemptEvent { event: AttemptEventMsg },
-    Log { chunk: LogChunk },
+    Heartbeat {
+        heartbeat: Box<Heartbeat>,
+    },
+    OfferReply {
+        command_id: CommandId,
+        attempt: AttemptRef,
+        decision: OfferDecision,
+    },
+    CommandAck {
+        command_id: CommandId,
+        result: CommandResult,
+    },
+    AttemptEvent {
+        event: AttemptEventMsg,
+    },
+    Log {
+        chunk: LogChunk,
+    },
     /// The inventory changed (toolchain installed, device attached).
-    InventoryChanged { inventory: Box<Inventory> },
-    Pong { nonce: u64 },
+    InventoryChanged {
+        inventory: Box<Inventory>,
+    },
+    Pong {
+        nonce: u64,
+    },
 }
 
 #[cfg(test)]
@@ -403,10 +485,16 @@ mod tests {
     #[test]
     fn messages_are_tagged_json() {
         let msg = ControllerMsg::Ping { nonce: 7 };
-        assert_eq!(serde_json::to_string(&msg).unwrap(), r#"{"type":"ping","nonce":7}"#);
+        assert_eq!(
+            serde_json::to_string(&msg).unwrap(),
+            r#"{"type":"ping","nonce":7}"#
+        );
         let ack = WorkerMsg::CommandAck {
             command_id: CommandId::generate(),
-            result: CommandResult::Rejected { code: RejectCode::StaleEpoch, message: "old".into() },
+            result: CommandResult::Rejected {
+                code: RejectCode::StaleEpoch,
+                message: "old".into(),
+            },
         };
         let json = serde_json::to_string(&ack).unwrap();
         assert_eq!(serde_json::from_str::<WorkerMsg>(&json).unwrap(), ack);

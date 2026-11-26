@@ -34,7 +34,10 @@ pub enum ContainError {
     #[error("containment is unavailable: {0}")]
     Unavailable(String),
     #[error("failed to start `{program}`: {source}")]
-    Spawn { program: String, source: std::io::Error },
+    Spawn {
+        program: String,
+        source: std::io::Error,
+    },
     #[error("scope `{0}` still has live processes")]
     NotEmpty(String),
     #[error("{0} is not supported by this adapter")]
@@ -175,13 +178,19 @@ pub fn native() -> Result<Box<dyn Containment>, ContainError> {
     }
     #[cfg(not(any(unix, windows)))]
     {
-        Err(ContainError::Unavailable("unsupported operating system".into()))
+        Err(ContainError::Unavailable(
+            "unsupported operating system".into(),
+        ))
     }
 }
 
 /// Terminate, wait up to `grace`, then kill, then wait up to `kill_wait`
 /// for the scope to become empty.
-pub fn stop_scope(scope: &mut dyn Scope, grace: Duration, kill_wait: Duration) -> Result<Membership, ContainError> {
+pub fn stop_scope(
+    scope: &mut dyn Scope,
+    grace: Duration,
+    kill_wait: Duration,
+) -> Result<Membership, ContainError> {
     if scope.members()? == Membership::Empty {
         return Ok(Membership::Empty);
     }

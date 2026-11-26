@@ -109,8 +109,13 @@ pub struct Digest(String);
 impl Digest {
     pub fn parse(s: &str) -> Result<Self, IdError> {
         let ok = s.len() == 64
-            && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-        if ok { Ok(Self(s.to_string())) } else { Err(IdError::BadDigest(s.to_string())) }
+            && s.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if ok {
+            Ok(Self(s.to_string()))
+        } else {
+            Err(IdError::BadDigest(s.to_string()))
+        }
     }
 
     pub fn of_bytes(bytes: &[u8]) -> Self {
@@ -225,7 +230,10 @@ mod tests {
     fn ids_round_trip_and_reject_foreign_prefixes() {
         let job = JobId::generate();
         assert_eq!(JobId::parse(job.as_str()).unwrap(), job);
-        assert!(matches!(AttemptId::parse(job.as_str()), Err(IdError::WrongPrefix { .. })));
+        assert!(matches!(
+            AttemptId::parse(job.as_str()),
+            Err(IdError::WrongPrefix { .. })
+        ));
         assert!(JobId::parse("job_xyz").is_err());
         let json = serde_json::to_string(&job).unwrap();
         assert_eq!(serde_json::from_str::<JobId>(&json).unwrap(), job);
@@ -235,7 +243,10 @@ mod tests {
     #[test]
     fn digest_matches_known_vector() {
         let d = Digest::of_bytes(b"abc");
-        assert_eq!(d.as_str(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(
+            d.as_str(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
         let mut w = DigestWriter::new();
         w.update(b"a");
         w.update(b"bc");

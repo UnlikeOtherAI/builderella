@@ -120,7 +120,10 @@ impl MachinePolicy {
                 max_disconnected_secs: 5 * 60,
                 ..base
             },
-            MachineProfile::InfrastructureOnly => Self { accept_builds: false, ..base },
+            MachineProfile::InfrastructureOnly => Self {
+                accept_builds: false,
+                ..base
+            },
             MachineProfile::EphemeralCloud => Self {
                 foreground_cpu_percent: 5,
                 foreground_memory_percent: 5,
@@ -138,8 +141,9 @@ impl MachinePolicy {
     pub fn managed_ceiling(&self, hardware: &Hardware) -> ResourceVector {
         let total_cpu = u64::from(hardware.logical_cpus) * 1000;
         let cpu = total_cpu * (100 - u64::from(self.foreground_cpu_percent.min(100))) / 100;
-        let reserve = (hardware.memory_bytes / 100 * u64::from(self.foreground_memory_percent.min(100)))
-            .max(self.foreground_memory_min_bytes);
+        let reserve = (hardware.memory_bytes / 100
+            * u64::from(self.foreground_memory_percent.min(100)))
+        .max(self.foreground_memory_min_bytes);
         let memory = hardware.memory_bytes.saturating_sub(reserve);
         let mut ceiling = ResourceVector {
             cpu_milli: cpu,
@@ -231,7 +235,9 @@ impl Inventory {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PressureLevel {
     #[default]
@@ -241,7 +247,9 @@ pub enum PressureLevel {
     Critical,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ThermalState {
     #[default]
