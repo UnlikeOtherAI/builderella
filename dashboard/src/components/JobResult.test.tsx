@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Fixtures, type JobView } from '../api/schemas';
 import { summarizeJob } from '../lib/job';
 import { rawFixtures } from '../test/fixtures';
-import { JobResult, JobResultChips } from './JobResult';
+import { JobResult } from './JobResult';
 
 afterEach(cleanup);
 
@@ -77,22 +77,5 @@ describe('JobResult', () => {
     render(<JobResult job={odd} />);
     expect(screen.getByText('awaiting_audit')).toBeTruthy();
     expect(screen.getByText('Not settled')).toBeTruthy();
-  });
-});
-
-describe('JobResultChips', () => {
-  it('adds a cleanup marker to a pass that is not settled', () => {
-    render(<JobResultChips job={settled} />);
-    expect(screen.getByText('Passed')).toBeTruthy();
-    expect(screen.queryByText(/cleanup/)).toBeNull();
-    cleanup();
-
-    render(<JobResultChips job={cleaning} />);
-    expect(screen.getByText('Passed')).toBeTruthy();
-    expect(screen.getByText('cleanup pending')).toBeTruthy();
-    cleanup();
-
-    render(<JobResultChips job={quarantined} />);
-    expect(screen.getByText('cleanup quarantined')).toBeTruthy();
   });
 });

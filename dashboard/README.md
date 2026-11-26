@@ -1,14 +1,31 @@
 # Builderella dashboard
 
 The web UI of a Builderella controller: a static single-page app (React,
-TypeScript, Vite) with six views (Overview, Fleet, Queue, Jobs,
-Environments, Administration) and a sign-in screen. The controller embeds the
-built files and serves them at `/`; there is no frontend server.
+TypeScript, Vite) with six sections and a sign-in screen. The controller
+embeds the built files and serves them at `/`; there is no frontend server.
 
-Overview is the landing page: fleet totals, one row per machine, what is
-being launched, what is running, the first ten queued jobs, the environments
-kept alive and the latest 50 events. It only reads. Fleet, at `/fleet`, has
-the detail of each machine.
+Every page leads with a summary and keeps the detail one click away:
+
+* **Overview** (`/`): what needs a person, five headline numbers, the
+  machines one line each, what runs and what waits next, recent activity.
+* **Machines** (`/machines`, `/machines/<id>`): one table to compare them;
+  a machine's page has its load broken down, what runs on it, health,
+  policy and hardware.
+* **Jobs** (`/jobs`, `/jobs/<id>`): one table with filters and search; a
+  job's page has its status and Cancel on top and tabs for the summary,
+  steps, log, artifacts and details.
+* **Queue** (`/queue`): waiting jobs one line each with why they wait,
+  expandable to the per-machine explanation; jobs in progress; fair share.
+* **Services** (`/services`, `/services/<id>`): what the API calls
+  environments: endpoints, time left, Renew and Finish.
+* **Settings** (`/settings`): machine policies, adding a machine, projects
+  and access tokens.
+
+Machines and jobs share one status vocabulary (`src/lib/status.ts`): a
+coloured dot and a word, with the precise state in a tooltip and on the
+detail page. The routes of earlier versions (`/fleet`, `/environments`,
+`/admin`) redirect to their new names; `/jobs/<id>`, which the CLI and the
+MCP server print, never moves.
 
 It reads the REST API under `/api/v1` and follows the event stream at
 `/api/v1/events`. The wire types are the Rust types in
@@ -51,9 +68,9 @@ VITE_MOCK=1 npm run build
 
 Mock mode answers from `src/mocks/fixtures.json` and shows a "Mock data"
 badge. Writes (cancel, renew, policy edits, pairing codes, tokens) change an
-in-memory copy and are lost on reload. `?mock=1&role=viewer` shows the
-read-only administration view. Nothing in mock mode moves on its own; it is
-not a model of the scheduler.
+in-memory copy and are lost on reload. `?mock=1&role=viewer` shows what a
+viewer sees (no Cancel, Renew or Finish, read-only Settings). Nothing in
+mock mode moves on its own; it is not a model of the scheduler.
 
 ## Fixtures
 
@@ -73,10 +90,11 @@ matches.
 
 ```
 src/api/         schemas, fetch layer, event stream, query hooks, mock layer
-src/lib/         formatting, capacity-bar arithmetic, lease and policy maths, labels
-src/components/  capacity bar, queue reason, job result, log viewer, small UI pieces
-src/views/       the six views and sign-in
+src/lib/         status vocabulary, formatting, load-bar arithmetic, lease and policy maths, labels
+src/components/  frame (sidebar, top bar), icons, load bars, queue reason, job result, log viewer, UI kit
+src/views/       the pages and sign-in
 src/mocks/       fixtures.json (generated)
+src/test/        test helpers: fixture copies, rendering the app against the mock
 ```
 
 ## Notes for whoever wires this to the controller

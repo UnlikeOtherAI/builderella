@@ -1,477 +1,424 @@
-// The whole fleet on one page: machines, what is being launched, what is
-// running, what waits, what is kept alive, and what just happened. Every
-// section reads only, and fails on its own.
+// The landing page: is everything OK, what is running where, what waits,
+// and what just happened. It only reads, and each part fails on its own.
 
-import { useId, type ReactNode } from 'react';
-import { Link } from 'react-router';
 import type { UseQueryResult } from '@tanstack/react-query';
+import { useState, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import { useEnvironments, useFleet, useJobs, useNow, useQueue } from '../api/hooks';
 import { useActivity, useLive } from '../api/live';
-import type {
-  EnvironmentView,
-  EventRecord,
-  FleetOverview,
-  JobView,
-  MachineView,
-  QueueView,
-} from '../api/schemas';
-import { Chip, Empty, ErrorPanel, Ident, Loadable, Loading } from '../components/ui';
+import type { EventRecord, FleetOverview, JobView, QueueView } from '../api/schemas';
+import { JobLink, MachineLink, Platform } from '../components/bits';
+import { Icon, type IconName } from '../components/icons';
+import { MiniLoad } from '../components/LoadBar';
+import {
+  Callout,
+  Card,
+  Empty,
+  ErrorPanel,
+  FlagSummary,
+  Ident,
+  Loadable,
+  Loading,
+  PageHeader,
+  StatusBadge,
+} from '../components/ui';
+import { machineCapacity } from '../lib/capacity';
 import { describeEvent } from '../lib/eventText';
+import { formatDuration, formatTimestamp, shortId } from '../lib/format';
 import {
-  formatBytes,
-  formatCpu,
-  formatDuration,
-  formatResources,
-  formatTimestamp,
-  shortId,
-} from '../lib/format';
-import {
-  enforcementDetail,
-  enforcementLabel,
-  environmentStateLabel,
-  environmentStateTone,
-  flagLabel,
-  lastSeenText,
-  lifecycleLabel,
-  osLabel,
-  phaseLabel,
-  priorityLabel,
-  reasonLabel,
-  reasonTone,
-} from '../lib/labels';
-import {
-  LIVENESS,
   aliveEnvironments,
-  attemptPhaseLabel,
   attemptRows,
-  liveness,
-  livenessCounts,
+  attentionItems,
+  failuresSince,
+  longestWait,
   type AttemptRow,
   type Since,
 } from '../lib/overview';
-import { Countdown } from './Environments';
+import { isOnline, machineFlags, machineStatus, phaseStatus, queueLine } from '../lib/status';
 
+/** Events listed before "show all". */
+export const ACTIVITY_SHOWN = 12;
 /** Queued jobs listed here; the rest are on the Queue page. */
-export const QUEUE_SHOWN = 10;
-/** The most the API returns; held attempts older than this lose their times. */
-const JOB_LIMIT = 1000;
+export const QUEUE_SHOWN = 5;
+/** The most the API returns in one list. */
+const ACTIVE_LIMIT = 1000;
+/** Recently changed jobs read to count failures. */
+const RECENT_LIMIT = 200;
+const HOUR = 3_600_000;
 
 export function OverviewView() {
   const fleet = useFleet();
-  const jobs = useJobs({ active: true, limit: JOB_LIMIT });
+  const active = useJobs({ active: true, limit: ACTIVE_LIMIT });
+  const recent = useJobs({ limit: RECENT_LIMIT });
   const queue = useQueue();
   const environments = useEnvironments();
   const activity = useActivity();
 
-  const rows = fleet.data ? attemptRows(fleet.data, jobs.data, activity.phases) : undefined;
-  const alive = environments.data ? aliveEnvironments(environments.data) : undefined;
+  const rows = fleet.data ? attemptRows(fleet.data, active.data, activity.phases) : undefined;
+  const attention = attentionItems(fleet.data, queue.data);
 
   return (
     <div className="overview">
-      <h1>Overview</h1>
-      <Totals
-        fleet={fleet}
-        launching={rows?.launching.length}
-        running={rows?.running.length}
-        queue={queue}
-        environments={environments}
-        alive={alive?.length}
-      />
-      {fleet.data?.reconciling ? (
-        <p className="note note-warn" role="status">
-          The controller is reconciling with its workers after a restart and is not starting new work
-          until that is done.
-        </p>
-      ) : null}
+      <PageHeader title="Overview" description="Your build fleet at a glance: machines, what runs, what waits." />
+      <Attention items={attention} />
+      <Headlines fleet={fleet} queue={queue} recent={recent} rows={rows} />
 
-      <Section title="Machines" count={fleet.data?.machines.length}>
-        <Loadable query={fleet} what="the machines">
-          {(data) => <Machines fleet={data} />}
-        </Loadable>
-      </Section>
+      <div className="grid-2">
+        <div className="stack-gap">
+          <Card
+            title="Machines"
+            actions={
+              <Link to="/machines" className="card-link">
+                All machines <Icon name="chevronRight" size={14} />
+              </Link>
+            }
+            flush
+          >
+            <Loadable query={fleet} what="the machines" lines={6}>
+              {(data) => <MachineList fleet={data} />}
+            </Loadable>
+          </Card>
+          <ServicesLine environments={environments} />
+          <Card title="Recent activity" description="What the controller recorded, newest first.">
+            <ActivityFeed fleet={fleet.data} jobs={active.data} queue={queue.data} />
+          </Card>
+        </div>
 
-      <Section title="Launching" count={rows?.launching.length}>
-        <Attempts fleet={fleet} jobs={jobs} rows={rows?.launching} launching />
-      </Section>
+        <div className="stack-gap">
+          <Card
+            title="Running now"
+            actions={
+              <Link to="/jobs?show=running" className="card-link">
+                All running <Icon name="chevronRight" size={14} />
+              </Link>
+            }
+            flush
+          >
+            <Loadable query={fleet} what="running jobs" lines={4}>
+              {() => (
+                <>
+                  {active.error ? (
+                    <ErrorPanel
+                      error={active.error}
+                      onRetry={() => void active.refetch()}
+                      context="The job list could not be read, so times may be missing."
+                    />
+                  ) : null}
+                  <NowList rows={rows ? [...rows.launching, ...rows.running] : []} />
+                </>
+              )}
+            </Loadable>
+          </Card>
 
-      <Section title="Running" count={rows?.running.length}>
-        <Attempts fleet={fleet} jobs={jobs} rows={rows?.running} launching={false} />
-      </Section>
-
-      <Section title="Queue" count={queue.data?.entries.length}>
-        <Loadable query={queue} what="the queue">
-          {(data) => <QueueTable queue={data} readAt={queue.dataUpdatedAt} />}
-        </Loadable>
-      </Section>
-
-      <Section title="Alive" count={alive?.length}>
-        <Loadable query={environments} what="environments">
-          {(data) => <Alive environments={aliveEnvironments(data)} />}
-        </Loadable>
-      </Section>
-
-      <Section title="Activity">
-        <ActivityFeed fleet={fleet.data} jobs={jobs.data} queue={queue.data} />
-      </Section>
+          <Card
+            title="Next in the queue"
+            actions={
+              <Link to="/queue" className="card-link">
+                Full queue <Icon name="chevronRight" size={14} />
+              </Link>
+            }
+            flush
+          >
+            <Loadable query={queue} what="the queue" lines={3}>
+              {(data) => <QueuePreview queue={data} readAt={queue.dataUpdatedAt} />}
+            </Loadable>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }
 
-function Section({ title, count, children }: { title: string; count?: number; children: ReactNode }) {
-  const id = useId();
+// --------------------------------------------------------------- attention
+
+function Attention({ items }: { items: ReturnType<typeof attentionItems> }) {
+  if (items.length === 0) return null;
+  const shown = items.slice(0, 4);
   return (
-    <section aria-labelledby={id}>
-      <h2 id={id}>
-        {title}
-        {count === undefined ? '' : ` (${count})`}
+    <section className="attention" aria-labelledby="attention-title">
+      <h2 id="attention-title" className="attention-title">
+        <Icon name="alert" /> Needs attention
       </h2>
-      {children}
+      <ul>
+        {shown.map((item) => (
+          <li key={item.key} className={`attention-item tone-${item.tone}`}>
+            <span className="dot" aria-hidden="true" />
+            <span className="attention-text">{item.text}</span>
+            <Link to={item.to} className="attention-link">
+              Open<span className="sr-only">: {item.text}</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      {items.length > shown.length ? (
+        <p className="attention-more">
+          {items.length - shown.length} more: see <Link to="/machines">Machines</Link> and{' '}
+          <Link to="/queue">Queue</Link>.
+        </p>
+      ) : null}
     </section>
   );
 }
 
-// ------------------------------------------------------------------ totals
+// --------------------------------------------------------------- headlines
 
-function Total({
+function Tile({
   label,
+  icon,
+  to,
   query,
   value,
   detail,
+  tone,
 }: {
   label: string;
-  /** The query the number is counted from. */
+  icon: IconName;
+  to: string;
+  /** The query the number comes from. */
   query: UseQueryResult<unknown>;
   value: ReactNode;
-  detail?: string;
+  detail?: ReactNode;
+  tone?: 'bad' | 'warn';
 }) {
   const unknown = query.data === undefined;
   const failed = unknown && query.error !== null;
   return (
-    <div className="total">
-      <dt>{label}</dt>
-      <dd>
-        {unknown ? <span className="muted">{failed ? 'unknown' : '…'}</span> : value}
-        {!unknown && detail ? <span className="total-detail"> {detail}</span> : null}
-      </dd>
-    </div>
+    <Link to={to} className={`tile${tone ? ` tile-${tone}` : ''}`}>
+      <span className="tile-label">
+        <Icon name={icon} size={16} /> {label}
+      </span>
+      <span className="tile-value">
+        {unknown ? (
+          failed ? (
+            <span className="muted">unknown</span>
+          ) : (
+            <span className="skeleton-line skeleton-short" aria-label="loading" />
+          )
+        ) : (
+          value
+        )}
+      </span>
+      <span className="tile-detail">{unknown ? ' ' : (detail ?? ' ')}</span>
+    </Link>
   );
 }
 
-function Totals({
+function Headlines({
   fleet,
   queue,
-  environments,
-  launching,
-  running,
-  alive,
+  recent,
+  rows,
 }: {
   fleet: UseQueryResult<FleetOverview>;
   queue: UseQueryResult<QueueView>;
-  environments: UseQueryResult<EnvironmentView[]>;
-  launching: number | undefined;
-  running: number | undefined;
-  alive: number | undefined;
+  recent: UseQueryResult<JobView[]>;
+  rows: ReturnType<typeof attemptRows> | undefined;
 }) {
+  const now = useNow(5000);
   const machines = fleet.data?.machines ?? [];
-  const counts = livenessCounts(machines);
-  const trouble = (['stale', 'unreachable', 'disconnected'] as const)
-    .filter((key) => counts[key] > 0)
-    .map((key) => `${counts[key]} ${key}`)
-    .join(', ');
+  const statuses = machines.map(machineStatus).filter((status) => status.key !== 'retired');
+  const online = statuses.filter(isOnline).length;
+  const stale = statuses.filter((s) => s.key === 'stale').length;
+  const offline = statuses.filter((s) => s.key === 'offline').length;
+  const down = [stale ? `${stale} stale` : '', offline ? `${offline} offline` : ''].filter(Boolean).join(', ');
+
+  const stuck = (queue.data?.entries ?? []).filter((e) => queueLine(e.job.queue_reason).stuck).length;
+  const longest = queue.data ? longestWait(queue.data) : undefined;
+  const age = Math.max(Date.now() - queue.dataUpdatedAt, 0);
+  const failures = recent.data ? failuresSince(recent.data, now - HOUR, RECENT_LIMIT) : undefined;
+
   return (
-    <dl className="totals" aria-label="Fleet totals">
-      <Total
-        label="Machines connected"
-        query={fleet}
-        value={`${counts.connected} of ${machines.length}`}
-        detail={trouble}
-      />
-      <Total label="Queued" query={queue} value={queue.data?.entries.length} />
-      <Total label="Launching" query={fleet} value={launching} />
-      <Total label="Running" query={fleet} value={running} />
-      <Total label="Environments alive" query={environments} value={alive} />
+    <dl className="tiles" aria-label="Fleet in numbers">
+      <div>
+        <dt className="sr-only">Machines online</dt>
+        <dd>
+          <Tile
+            label="Machines online"
+            icon="machines"
+            to="/machines"
+            query={fleet}
+            value={
+              <>
+                {online} <span className="tile-of">of {statuses.length}</span>
+              </>
+            }
+            detail={down || 'all in contact'}
+            tone={offline > 0 ? 'bad' : stale > 0 ? 'warn' : undefined}
+          />
+        </dd>
+      </div>
+      <div>
+        <dt className="sr-only">Running</dt>
+        <dd>
+          <Tile
+            label="Running"
+            icon="activity"
+            to="/jobs?show=running"
+            query={fleet}
+            value={rows ? rows.running.length : null}
+            detail={rows && rows.launching.length > 0 ? `${rows.launching.length} launching` : 'none launching'}
+          />
+        </dd>
+      </div>
+      <div>
+        <dt className="sr-only">Queued</dt>
+        <dd>
+          <Tile
+            label="Queued"
+            icon="queue"
+            to="/queue"
+            query={queue}
+            value={queue.data?.entries.length}
+            detail={stuck > 0 ? `${stuck} can't run` : 'all can run'}
+            tone={stuck > 0 ? 'bad' : undefined}
+          />
+        </dd>
+      </div>
+      <div>
+        <dt className="sr-only">Waiting longest</dt>
+        <dd>
+          <Tile
+            label="Waiting longest"
+            icon="clock"
+            to={longest ? `/jobs/${longest.job.id}` : '/queue'}
+            query={queue}
+            value={longest ? formatDuration(longest.waiting_ms + age) : '—'}
+            detail={longest ? `${longest.job.recipe}, ${longest.job.project_name}` : 'nothing waits'}
+          />
+        </dd>
+      </div>
+      <div>
+        <dt className="sr-only">Failed in the last hour</dt>
+        <dd>
+          <Tile
+            label="Failed, last hour"
+            icon="alert"
+            to="/jobs?show=failed"
+            query={recent}
+            value={failures ? `${failures.count}${failures.atLeast ? '+' : ''}` : null}
+            detail={failures && failures.count > 0 ? 'open the list' : 'no failures'}
+            tone={failures && failures.count > 0 ? 'bad' : undefined}
+          />
+        </dd>
+      </div>
     </dl>
   );
 }
 
 // ---------------------------------------------------------------- machines
 
-function Meter({ reserved, ceiling, text }: { reserved: number; ceiling: number; text: string }) {
-  const over = reserved > ceiling;
-  const share = ceiling > 0 ? Math.min(reserved / ceiling, 1) : reserved > 0 ? 1 : 0;
-  return (
-    <span className={over ? 'meter meter-over' : 'meter'}>
-      <span className="meter-text">
-        {text}
-        {over ? <strong> over ceiling</strong> : null}
-      </span>
-      <span className="meter-bar" aria-hidden="true">
-        <span style={{ width: `${share * 100}%` }} />
-      </span>
-    </span>
-  );
-}
-
-function Enforcement({ machine }: { machine: MachineView }) {
-  const { cpu, memory, verified } = machine.enforcement;
-  const soft = [cpu, memory].some((level) => level !== 'hard');
-  const text =
-    cpu === memory
-      ? enforcementLabel(cpu)
-      : `CPU ${enforcementLabel(cpu)}, memory ${enforcementLabel(memory)}`;
-  const detail = [...new Set([cpu, memory])]
-    .map((level) => `${enforcementLabel(level)}: ${enforcementDetail(level)}`)
-    .join('. ');
-  return (
-    <>
-      <span className={soft ? 'enforcement-tag enforcement-soft' : 'enforcement-tag'} title={detail}>
-        {text}
-      </span>
-      {verified ? null : <span className="sub">not self-tested</span>}
-    </>
-  );
-}
-
-function MachineState({ machine }: { machine: MachineView }) {
-  // Staleness and reachability are the liveness column's to say.
-  const flags: string[] = machine.flags.filter((flag) => flag !== 'stale' && flag !== 'unreachable');
-  // The owner's local controls count even before a flag reports them.
-  if (machine.local_control.paused && !flags.includes('user_paused')) flags.push('user_paused');
-  if (machine.local_control.draining && !flags.includes('draining')) flags.push('draining');
-  if (machine.lifecycle === 'ready' && flags.length === 0) return <span className="muted">Ready</span>;
-  return (
-    <span className="chips">
-      {machine.lifecycle !== 'ready' ? <Chip tone="warn">{lifecycleLabel(machine.lifecycle)}</Chip> : null}
-      {flags.map((flag) => (
-        <Chip key={flag} tone="warn">
-          {flagLabel(flag)}
-        </Chip>
-      ))}
-    </span>
-  );
-}
-
-function Machines({ fleet }: { fleet: FleetOverview }) {
-  const now = useNow(1000);
+function MachineList({ fleet }: { fleet: FleetOverview }) {
   if (fleet.machines.length === 0) {
     return (
-      <Empty title="No machines are enrolled">
-        Every enrolled machine appears here with its liveness, load and running jobs. An
-        administrator can add one under Administration.
+      <Empty
+        title="No machines yet"
+        icon="machines"
+        action={
+          <Link to="/settings#add-machine" className="btn btn-primary btn-small">
+            <Icon name="plus" size={14} /> Add your first machine
+          </Link>
+        }
+      >
+        Machines run the jobs. Create a pairing code in Settings, then run{' '}
+        <code>bella worker enroll</code> on the machine.
       </Empty>
     );
   }
   return (
-    <div className="table-wrap">
-      <table className="stack compact">
-        <thead>
-          <tr>
-            <th scope="col">Machine</th>
-            <th scope="col">Liveness</th>
-            <th scope="col">State</th>
-            <th scope="col">Enforcement</th>
-            <th scope="col">CPU reserved / ceiling</th>
-            <th scope="col">Memory reserved / ceiling</th>
-            <th scope="col">Running now</th>
-          </tr>
-        </thead>
-        <tbody>
-          {fleet.machines.map((machine) => {
-            const alive = liveness(machine);
-            const { platform } = machine.inventory.os;
-            return (
-              <tr key={machine.id} className={`contact-${alive}`}>
-                <th scope="row">
-                  <Link to={`/fleet/${machine.id}`}>{machine.name}</Link>
-                  <span className="sub">
-                    {osLabel(platform.os)} {platform.arch}
-                  </span>
-                </th>
-                <td data-label="Liveness">
-                  <Chip tone={LIVENESS[alive].tone} title={LIVENESS[alive].detail}>
-                    {LIVENESS[alive].label}
-                  </Chip>
-                  <span className="sub">{lastSeenText(machine, now)}</span>
-                </td>
-                <td data-label="State">
-                  <MachineState machine={machine} />
-                </td>
-                <td data-label="Enforcement">
-                  <Enforcement machine={machine} />
-                </td>
-                <td data-label="CPU reserved / ceiling">
-                  <Meter
-                    reserved={machine.reserved.cpu_milli}
-                    ceiling={machine.managed_ceiling.cpu_milli}
-                    text={`${formatCpu(machine.reserved.cpu_milli).replace(/ CPUs?$/, '')} / ${formatCpu(machine.managed_ceiling.cpu_milli)}`}
-                  />
-                </td>
-                <td data-label="Memory reserved / ceiling">
-                  <Meter
-                    reserved={machine.reserved.memory_bytes}
-                    ceiling={machine.managed_ceiling.memory_bytes}
-                    text={`${formatBytes(machine.reserved.memory_bytes)} / ${formatBytes(machine.managed_ceiling.memory_bytes)}`}
-                  />
-                </td>
-                <td data-label="Running now">
-                  {machine.attempts.length === 0 ? (
-                    <span className="muted">idle</span>
-                  ) : (
-                    <ul className="plain running-list">
-                      {machine.attempts.map((attempt) => (
-                        <li key={attempt.attempt_id}>
-                          <Link
-                            to={`/jobs/${attempt.job_id}`}
-                            title={`${attempt.recipe}, ${attempt.project_name}`}
-                          >
-                            {shortId(attempt.job_id)}
-                          </Link>
-                          {attempt.phase === 'executing' ? null : (
-                            <span className="muted"> {phaseLabel(attempt.phase).toLowerCase()}</span>
-                          )}
-                          {attempt.uncertain ? <span className="muted"> (uncertain)</span> : null}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <ul className="rows" aria-label="Machines">
+      {fleet.machines.map((machine) => {
+        const status = machineStatus(machine);
+        const capacity = machineCapacity(machine);
+        const count = machine.attempts.length;
+        const flags = machineFlags(machine, status);
+        return (
+          <li key={machine.id} className="row machine-row">
+            <span className="row-main">
+              <MachineLink id={machine.id} name={machine.name} />
+              <span className="row-sub row-sub-flags">
+                {flags.length > 0 ? <FlagSummary flags={flags} /> : <Platform machine={machine} />}
+              </span>
+            </span>
+            <span className="row-status">
+              <StatusBadge status={status} />
+            </span>
+            <MiniLoad cpu={capacity.cpu} memory={capacity.memory} />
+            <span className="row-count" title={`${count} ${count === 1 ? 'job' : 'jobs'} on this machine`}>
+              {count > 0 ? `${count} ${count === 1 ? 'job' : 'jobs'}` : <span className="muted">no jobs</span>}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
-// ----------------------------------------------------- launching, running
-
-function JobLink({ id, recipe }: { id: string; recipe?: string }) {
-  return (
-    <Link to={`/jobs/${id}`}>
-      {recipe ? `${recipe} ` : ''}
-      <Ident value={id} />
-    </Link>
-  );
-}
+// --------------------------------------------------------------------- now
 
 function Elapsed({ since, now }: { since: Since | null; now: number }) {
-  if (!since) return <span className="muted">unknown</span>;
+  if (!since) return <span className="muted">—</span>;
   return (
-    <span title={`since ${formatTimestamp(since.at)}`}>
+    <span title={`${since.sinceOffer ? 'Since it was offered' : 'Since'} ${formatTimestamp(since.at)}`}>
       {formatDuration(Math.max(now - since.at, 0))}
       {since.sinceOffer ? <span className="muted"> since offered</span> : null}
     </span>
   );
 }
 
-function Phase({ row }: { row: AttemptRow }) {
-  const { phase, uncertain } = row.attempt;
-  const tone = phase === 'quarantined' ? 'bad' : phase === 'cleaning' ? 'warn' : 'info';
+/** Running jobs listed here; the rest are on the Jobs page. */
+export const NOW_SHOWN = 6;
+
+function NowList({ rows }: { rows: AttemptRow[] }) {
+  const now = useNow(1000);
+  if (rows.length === 0) {
+    return (
+      <Empty title="Nothing is running" icon="activity">
+        Jobs appear here from the moment a machine takes them until their resources are released.
+      </Empty>
+    );
+  }
   return (
     <>
-      <span className="chips">
-        <Chip tone={tone}>{attemptPhaseLabel(row)}</Chip>
-        {uncertain ? (
-          <Chip tone="warn" title="The worker is out of contact; the attempt may still be running.">
-            uncertain
-          </Chip>
-        ) : null}
-      </span>
-      {phase === 'cleaning' || phase === 'quarantined' ? (
-        <span className="sub">resources still held</span>
-      ) : null}
+    <ul className="rows" aria-label="Running and launching jobs">
+      {rows.slice(0, NOW_SHOWN).map((row) => {
+        const status = phaseStatus(row.attempt.phase);
+        const shown = row.accepted ? { ...status, precise: 'Accepted by the machine, starting' } : status;
+        const launching = status.key === 'launching';
+        return (
+          <li key={row.attempt.attempt_id} className="row now-row">
+            <span className="row-status">
+              <StatusBadge status={shown} live />
+            </span>
+            <span className="row-main">
+              <JobLink id={row.attempt.job_id} recipe={row.attempt.recipe} />
+              <span className="row-sub">
+                {row.attempt.project_name} on <MachineLink id={row.machineId} name={row.machineName} />
+                {row.attempt.uncertain ? <span className="text-warn"> · out of contact</span> : null}
+                {row.attempt.phase === 'quarantined' ? <span className="text-bad"> · stuck cleanup</span> : null}
+              </span>
+            </span>
+            <span className="row-time">
+              <Elapsed since={launching ? row.phaseSince : row.runningSince} now={now} />
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+    {rows.length > NOW_SHOWN ? (
+      <p className="card-foot">
+        {rows.length - NOW_SHOWN} more. <Link to="/jobs?show=running">See all running jobs</Link>
+      </p>
+    ) : null}
     </>
   );
 }
 
-function Attempts({
-  fleet,
-  jobs,
-  rows,
-  launching,
-}: {
-  fleet: UseQueryResult<FleetOverview>;
-  jobs: UseQueryResult<JobView[]>;
-  rows: AttemptRow[] | undefined;
-  launching: boolean;
-}) {
-  const now = useNow(1000);
-  return (
-    <Loadable query={fleet} what={launching ? 'launching attempts' : 'running attempts'}>
-      {() => (
-        <>
-          {jobs.error ? (
-            <ErrorPanel
-              error={jobs.error}
-              onRetry={() => void jobs.refetch()}
-              context="The job list could not be read, so times may be missing or out of date."
-            />
-          ) : null}
-          {!rows || rows.length === 0 ? (
-            launching ? (
-              <Empty title="Nothing is being launched">
-                Jobs offered to a machine or preparing their workspace appear here until they start
-                executing.
-              </Empty>
-            ) : (
-              <Empty title="Nothing is running">
-                Jobs that are executing, collecting or cleaning up appear here until their resources
-                are released.
-              </Empty>
-            )
-          ) : (
-            <div className="table-wrap">
-              <table className="stack compact">
-                <thead>
-                  <tr>
-                    <th scope="col">Job</th>
-                    <th scope="col">Project</th>
-                    <th scope="col">Machine</th>
-                    <th scope="col">Phase</th>
-                    <th scope="col">{launching ? 'In this phase' : 'Elapsed'}</th>
-                    {launching ? null : <th scope="col">Holds</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.attempt.attempt_id}>
-                      <td data-label="Job">
-                        <JobLink id={row.attempt.job_id} recipe={row.attempt.recipe} />
-                      </td>
-                      <td data-label="Project">{row.attempt.project_name}</td>
-                      <td data-label="Machine">
-                        <Link to={`/fleet/${row.machineId}`}>{row.machineName}</Link>
-                      </td>
-                      <td data-label="Phase">
-                        <Phase row={row} />
-                      </td>
-                      <td data-label={launching ? 'In this phase' : 'Elapsed'} className="nowrap">
-                        <Elapsed since={launching ? row.phaseSince : row.runningSince} now={now} />
-                      </td>
-                      {launching ? null : (
-                        <td data-label="Holds">{formatResources(row.attempt.reserved)}</td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
-    </Loadable>
-  );
-}
-
-// ------------------------------------------------------------------- queue
-
-function QueueTable({ queue, readAt }: { queue: QueueView; readAt: number }) {
+function QueuePreview({ queue, readAt }: { queue: QueueView; readAt: number }) {
   useNow(1000);
   if (queue.entries.length === 0) {
     return (
-      <Empty title="Nothing is waiting">
-        Jobs that have no machine yet appear here in order, with why they wait.
+      <Empty title="Nothing is waiting" icon="queue">
+        Submitted jobs wait here until a machine has room for them.
       </Empty>
     );
   }
@@ -480,131 +427,55 @@ function QueueTable({ queue, readAt }: { queue: QueueView; readAt: number }) {
   const shown = queue.entries.slice(0, QUEUE_SHOWN);
   return (
     <>
-      <div className="table-wrap">
-        <table className="stack compact">
-          <thead>
-            <tr>
-              <th scope="col">Position</th>
-              <th scope="col">Job</th>
-              <th scope="col">Project</th>
-              <th scope="col">Priority</th>
-              <th scope="col">Waited</th>
-              <th scope="col">Why it waits</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map(({ job, position, waiting_ms }) => (
-              <tr key={job.id}>
-                <td data-label="Position">{position}</td>
-                <td data-label="Job">
-                  <JobLink id={job.id} recipe={job.recipe} />
-                </td>
-                <td data-label="Project">{job.project_name}</td>
-                <td data-label="Priority">{priorityLabel(job.priority)}</td>
-                <td data-label="Waited" className="nowrap">{formatDuration(waiting_ms + age)}</td>
-                <td data-label="Why it waits">
-                  {job.queue_reason ? (
-                    <>
-                      <Chip tone={reasonTone(job.queue_reason.code)}>
-                        {reasonLabel(job.queue_reason.code)}
-                      </Chip>
-                      <span className="sub">{job.queue_reason.message}</span>
-                    </>
-                  ) : (
-                    <span className="muted">No reason given</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p>
-        {queue.entries.length > shown.length
-          ? `Showing the first ${shown.length} of ${queue.entries.length}. `
-          : ''}
-        <Link to="/queue">Open the full queue</Link>
-      </p>
+      <ol className="rows" aria-label="Next in the queue">
+        {shown.map(({ job, position, waiting_ms }) => {
+          const line = queueLine(job.queue_reason);
+          return (
+            <li key={job.id} className="row queue-row">
+              <span className="row-position" aria-label={`Position ${position}`}>
+                {position}
+              </span>
+              <span className="row-main">
+                <JobLink id={job.id} recipe={job.recipe} />
+                <span className={`row-sub reason-line tone-${line.tone}`} title={`${line.headline}. ${line.message}`}>
+                  <span className="dot" aria-hidden="true" />
+                  {line.headline}
+                </span>
+              </span>
+              <span className="row-time">{formatDuration(waiting_ms + age)}</span>
+            </li>
+          );
+        })}
+      </ol>
+      {queue.entries.length > shown.length ? (
+        <p className="card-foot">
+          {queue.entries.length - shown.length} more waiting. <Link to="/queue">Open the queue</Link>
+        </p>
+      ) : null}
     </>
   );
 }
 
-// ------------------------------------------------------------------- alive
-
-function Alive({ environments }: { environments: EnvironmentView[] }) {
-  const now = useNow(1000);
-  if (environments.length === 0) {
-    return (
-      <Empty title="Nothing is kept alive">
-        Environments, which keep a job's services running, appear here with their endpoints and
-        deadline.
-      </Empty>
-    );
-  }
+function ServicesLine({ environments }: { environments: ReturnType<typeof useEnvironments> }) {
+  const alive = environments.data ? aliveEnvironments(environments.data) : undefined;
+  const ready = alive?.filter((environment) => environment.state === 'ready').length ?? 0;
   return (
-    <>
-      <div className="table-wrap">
-        <table className="stack compact">
-          <thead>
-            <tr>
-              <th scope="col">Environment</th>
-              <th scope="col">State</th>
-              <th scope="col">Job</th>
-              <th scope="col">Machine</th>
-              <th scope="col">Endpoints</th>
-              <th scope="col">Lease deadline</th>
-            </tr>
-          </thead>
-          <tbody>
-            {environments.map((environment) => (
-              <tr key={environment.id}>
-                <td data-label="Environment">
-                  <Link to={`/environments/${environment.id}`}>
-                    <Ident value={environment.id} />
-                  </Link>
-                </td>
-                <td data-label="State">
-                  <Chip tone={environmentStateTone(environment.state)}>
-                    {environmentStateLabel(environment.state)}
-                  </Chip>
-                </td>
-                <td data-label="Job">
-                  <JobLink id={environment.job_id} />
-                </td>
-                <td data-label="Machine">
-                  <Link to={`/fleet/${environment.machine_id}`}>{environment.machine_name}</Link>
-                </td>
-                <td data-label="Endpoints">
-                  {environment.endpoints.length === 0 ? (
-                    <span className="muted">none published</span>
-                  ) : (
-                    <ul className="plain">
-                      {environment.endpoints.map((endpoint) => (
-                        <li key={`${endpoint.step}/${endpoint.host}:${endpoint.port}`}>
-                          <span className="tag">{endpoint.step}</span>{' '}
-                          <code className="wrap">
-                            {endpoint.host}:{endpoint.port}
-                          </code>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </td>
-                <td data-label="Lease deadline">
-                  <Countdown environment={environment} now={now} />
-                  {environment.state === 'ready' || environment.state === 'starting' ? (
-                    <span className="sub">{formatTimestamp(environment.effective_deadline)}</span>
-                  ) : null}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p>
-        <Link to="/environments">Open Environments</Link>
-      </p>
-    </>
+    <Link to="/services" className="card services-line">
+      <Icon name="services" />
+      <span>
+        <strong>Services</strong>{' '}
+        <span className="muted">
+          {alive === undefined
+            ? environments.error
+              ? 'could not be read'
+              : 'loading…'
+            : alive.length === 0
+              ? 'none kept running'
+              : `${alive.length} kept running, ${ready} ready`}
+        </span>
+      </span>
+      <Icon name="chevronRight" size={16} />
+    </Link>
   );
 }
 
@@ -621,11 +492,11 @@ function Subject({ event, names }: { event: EventRecord; names: Names }) {
   if (event.job_id) return <JobLink id={event.job_id} recipe={names.recipe(event.job_id)} />;
   switch (event.entity) {
     case 'machine':
-      return <Link to={`/fleet/${event.entity_id}`}>{names.machine(event.entity_id)}</Link>;
+      return <Link to={`/machines/${event.entity_id}`}>{names.machine(event.entity_id)}</Link>;
     case 'environment':
       return (
-        <Link to={`/environments/${event.entity_id}`}>
-          environment <Ident value={event.entity_id} />
+        <Link to={`/services/${event.entity_id}`}>
+          service <Ident value={event.entity_id} />
         </Link>
       );
     default:
@@ -644,6 +515,8 @@ function ActivityFeed({
 }) {
   const { events } = useActivity();
   const live = useLive();
+  const [all, setAll] = useState(false);
+  const shown = all ? events : events.slice(0, ACTIVITY_SHOWN);
 
   const machines = new Map((fleet?.machines ?? []).map((m) => [m.id, m.name]));
   const recipes = new Map<string, string>();
@@ -665,55 +538,44 @@ function ActivityFeed({
   return (
     <>
       {down ? (
-        <div className="state state-error" role="alert">
-          <p className="state-title">The event stream is not connected</p>
-          <p className="state-detail">
-            Nothing new appears here until it is back; the sections above refresh on a timer.
-            {live.detail ? ` ${live.detail}` : ''}
-          </p>
-        </div>
+        <Callout tone="warn" title="Live updates are not connected" role="alert">
+          Nothing new appears here until they are back; the rest of the page refreshes on a timer.
+          {live.detail ? ` ${live.detail}` : ''}
+        </Callout>
       ) : null}
-      {live.drift ? (
-        <p className="note note-warn">An event was not understood and is missing from this feed.</p>
-      ) : null}
+      {live.drift ? <p className="note note-warn">An event was not understood and is missing from this list.</p> : null}
       {events.length === 0 ? (
         live.status === 'connecting' ? (
           <Loading what="recent events" />
         ) : (
-          <Empty title="No recent events">
-            Offers, starts, exits, releases, machine changes and submitted or cancelled jobs appear
-            here as they happen.
+          <Empty title="No recent events" icon="activity">
+            Jobs being placed, started, finished and cleaned up, and machines coming and going, appear here as
+            they happen.
           </Empty>
         )
-      ) : (
-        <p className="muted">
-          The latest {events.length} events, newest first. A job's phase changes that only repeat an
-          attempt event are left out.
-        </p>
-      )}
+      ) : null}
       {/* Present before the first event, so additions are announced. */}
-      <ol
-        className={events.length > 0 ? 'activity card' : 'activity'}
-        aria-label="Recent events"
-        aria-live="polite"
-        aria-relevant="additions"
-      >
-        {events.map((event) => {
+      <ol className="activity" aria-label="Recent events" aria-live="polite" aria-relevant="additions">
+        {shown.map((event) => {
           const text = describeEvent(event, names);
           return (
             <li key={event.seq}>
               <time dateTime={new Date(event.at).toISOString()} title={formatTimestamp(event.at)}>
                 {formatTimestamp(event.at).slice(11)}
               </time>
-              <span>
+              <span className="activity-text">
                 <Subject event={event} names={names} />
-                {': '}
-                {text ?? <code>{event.kind}</code>}
+                <span className="activity-what">{text ?? <code>{event.kind}</code>}</span>
               </span>
             </li>
           );
         })}
       </ol>
+      {events.length > shown.length ? (
+        <button type="button" className="btn btn-small" onClick={() => setAll(true)}>
+          Show all {events.length} recent events
+        </button>
+      ) : null}
     </>
   );
 }

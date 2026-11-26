@@ -145,3 +145,47 @@ export function machineCapacity(machine: MachineView): MachineCapacity {
     }),
   };
 }
+
+/**
+ * The same bar in the three words of a summary: in use (managed work plus
+ * everything else on the host), reserved but not yet used, and available.
+ * The unused part of the share protected for the owner is its own segment,
+ * drawn at the end.
+ */
+export interface LoadSummary {
+  total: number;
+  /** `null` without telemetry. */
+  inUse: number | null;
+  reserved: number;
+  available: number;
+  protectedUnused: number;
+  /** Shares of the drawn bar, 0..1, summing to 1 (or 0 for an empty machine). */
+  fractions: { inUse: number; reserved: number; available: number; protected: number };
+  /** In use plus reserved, as a share of the machine; can pass 1 when over-committed. */
+  load: number;
+  overBy: number;
+}
+
+export function summarizeLoad(capacity: Capacity): LoadSummary {
+  const part = (kind: SegmentKind) => capacity.segments.find((s) => s.kind === kind) ?? { value: 0, fraction: 0 };
+  const managed = part('managed_used');
+  const external = part('external');
+  const reserved = part('reserved_unused');
+  const protectedUnused = part('protected');
+  const used = managed.value + external.value;
+  return {
+    total: capacity.total,
+    inUse: capacity.measured ? used : null,
+    reserved: reserved.value,
+    available: capacity.free,
+    protectedUnused: protectedUnused.value,
+    fractions: {
+      inUse: managed.fraction + external.fraction,
+      reserved: reserved.fraction,
+      available: capacity.freeFraction,
+      protected: protectedUnused.fraction,
+    },
+    load: capacity.total > 0 ? (used + reserved.value) / capacity.total : 0,
+    overBy: capacity.overBy,
+  };
+}

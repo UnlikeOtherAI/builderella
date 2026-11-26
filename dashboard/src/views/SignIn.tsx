@@ -35,8 +35,13 @@ export function SignIn() {
 
   return (
     <main className="signin">
-      <h1>Builderella</h1>
-      <form onSubmit={(event) => void submit(event)} className="card form">
+      <form onSubmit={(event) => void submit(event)} className="card signin-card form">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            B
+          </span>
+          <h1 className="brand-name">Builderella</h1>
+        </div>
         <h2>Sign in</h2>
         <div className="field">
           <label htmlFor="token">API token</label>
@@ -51,14 +56,16 @@ export function SignIn() {
             autoFocus
           />
           <p className="hint" id="token-hint">
-            An administrator creates tokens under Administration or with the CLI. The token is kept in
+            An administrator creates tokens in Settings or with the CLI. The token is kept in
             this browser's local storage until you sign out or the controller rejects it.
           </p>
         </div>
         {problem ? (
-          <div className="state state-error" role="alert">
-            <p className="state-title">{problem.title}</p>
-            <p className="state-detail pre">{problem.detail}</p>
+          <div className="callout callout-bad" role="alert">
+            <div>
+              <p className="callout-title">{problem.title}</p>
+              <p className="callout-body pre">{problem.detail}</p>
+            </div>
           </div>
         ) : null}
         <div className="actions actions-start">

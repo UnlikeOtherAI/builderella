@@ -28,11 +28,8 @@ describe('QueueReasonView', () => {
   it('separates blockers that waiting can clear from those it cannot', () => {
     const reason = reasonOf('waiting_for_capacity');
     render(<QueueReasonView reason={reason} />);
-    expect(screen.getByText(/6 machines checked: 2 temporary, 4 permanent/)).toBeTruthy();
-
-    const temporary = screen.getByText('Temporary: waiting can clear these').nextElementSibling as HTMLElement;
-    const permanent = screen.getByText('Permanent: waiting will not change these')
-      .nextElementSibling as HTMLElement;
+    const temporary = screen.getByRole('list', { name: 'Waiting can clear these' });
+    const permanent = screen.getByRole('list', { name: 'Waiting will not change these' });
     expect(within(temporary).getAllByRole('listitem')).toHaveLength(2);
     expect(within(permanent).getAllByRole('listitem')).toHaveLength(4);
     expect(within(temporary).getByText('builder-2')).toBeTruthy();
@@ -68,7 +65,7 @@ describe('QueueReasonView', () => {
 
     render(<QueueReasonView reason={reasonOf('environment_quota')} />);
     expect(screen.getByText('Project at its environment limit')).toBeTruthy();
-    expect(screen.queryByText(/machines? checked/)).toBeNull();
+    expect(screen.queryByRole('list')).toBeNull();
     cleanup();
 
     render(<QueueReasonView reason={reasonOf('reserved_for_older_job')} />);
@@ -77,8 +74,7 @@ describe('QueueReasonView', () => {
 
     // A machine the job did not ask for stays excluded however long it waits.
     render(<QueueReasonView reason={reasonOf('machine_paused')} />);
-    const permanent = screen.getByText('Permanent: waiting will not change these')
-      .nextElementSibling as HTMLElement;
+    const permanent = screen.getByRole('list', { name: 'Waiting will not change these' });
     expect(within(permanent).getByText('Not the machine, pool or platform the job asked for')).toBeTruthy();
     expect(reasonTone('placement_constraint')).toBe('bad');
   });
@@ -86,7 +82,7 @@ describe('QueueReasonView', () => {
   it('shows no machine list when nothing is blocking', () => {
     render(<QueueReasonView reason={reasonOf('schedulable')} />);
     expect(screen.getByText('Ready to start')).toBeTruthy();
-    expect(screen.queryByText(/machines? checked/)).toBeNull();
+    expect(screen.queryByRole('list')).toBeNull();
   });
 
   it('shows a reason code it does not know as the raw value', () => {
@@ -101,6 +97,12 @@ describe('QueueReasonView', () => {
     expect(screen.getByText('waiting_for_license_seat')).toBeTruthy();
     expect(screen.getByText('All 3 compiler license seats are in use.')).toBeTruthy();
     expect(screen.getByText('license_seat_busy')).toBeTruthy();
-    expect(screen.getByText(/1 machine checked: 1 temporary, 0 permanent/)).toBeTruthy();
+    expect(within(screen.getByRole('list', { name: 'Waiting can clear these' })).getAllByRole('listitem')).toHaveLength(1);
+    expect(screen.queryByRole('list', { name: 'Waiting will not change these' })).toBeNull();
+  });
+
+  it("says plainly when waiting will not help", () => {
+    render(<QueueReasonView reason={reasonOf('no_compatible_machine')} />);
+    expect(screen.getByText("Can't run: no compatible machine")).toBeTruthy();
   });
 });

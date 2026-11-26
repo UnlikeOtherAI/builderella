@@ -1,5 +1,5 @@
-// How the Overview page classifies what the API reports: whether a machine
-// is alive, and which held attempts are being launched or are running.
+// How the Overview page reads what the API reports: which held attempts are
+// being launched or are running, and what needs a person.
 
 import type { PhaseMark } from '../api/activity';
 import type {
@@ -8,43 +8,10 @@ import type {
   EnvironmentView,
   FleetOverview,
   JobView,
-  MachineView,
+  QueueView,
 } from '../api/schemas';
-import { phaseLabel, type Tone } from './labels';
-
-export type Liveness = 'connected' | 'stale' | 'unreachable' | 'disconnected';
-
-export const LIVENESS: Record<Liveness, { label: string; tone: Tone; detail: string }> = {
-  connected: { label: 'Connected', tone: 'ok', detail: 'Connected and reporting.' },
-  stale: {
-    label: 'Stale',
-    tone: 'warn',
-    detail: 'No heartbeat within the freshness window, so it gets no new offers.',
-  },
-  unreachable: {
-    label: 'Unreachable',
-    tone: 'bad',
-    detail: 'No contact for longer than the unreachable threshold. Its reservations stay held.',
-  },
-  disconnected: {
-    label: 'Disconnected',
-    tone: 'bad',
-    detail: 'No control connection to the controller.',
-  },
-};
-
-/** The worst thing known about a machine's contact with the controller. */
-export function liveness(machine: MachineView): Liveness {
-  if (machine.flags.includes('unreachable')) return 'unreachable';
-  if (!machine.connected) return 'disconnected';
-  return machine.flags.includes('stale') ? 'stale' : 'connected';
-}
-
-export function livenessCounts(machines: MachineView[]): Record<Liveness, number> {
-  const counts = { connected: 0, stale: 0, unreachable: 0, disconnected: 0 };
-  for (const machine of machines) counts[liveness(machine)] += 1;
-  return counts;
-}
+import type { Tone } from './labels';
+import { isFailure, machineStatus, queueLine } from './status';
 
 /** Phases before anything executes. Every other held phase counts as running. */
 const LAUNCHING: ReadonlySet<string> = new Set(['offered', 'preparing']);
@@ -68,9 +35,6 @@ export interface AttemptRow {
   /** When it started executing; `null` when the job list lacks it. */
   runningSince: Since | null;
 }
-
-export const attemptPhaseLabel = (row: AttemptRow) =>
-  row.accepted ? 'Accepted, starting' : phaseLabel(row.attempt.phase);
 
 function phaseSince(
   attempt: AttemptView | undefined,
@@ -142,3 +106,100 @@ export function attemptRows(
 /** Environments that still exist: everything but the ended ones. */
 export const aliveEnvironments = (list: EnvironmentView[]) =>
   list.filter((environment) => environment.state !== 'ended');
+
+// ---------------------------------------------------------------- attention
+
+export interface AttentionItem {
+  key: string;
+  tone: Tone;
+  /** What needs a person, in one sentence. */
+  text: string;
+  /** Where to act on it. */
+  to: string;
+}
+
+/**
+ * What needs a person right now: machines out of contact or holding
+ * capacity that cleanup could not release, and queued jobs that no machine
+ * can run however long they wait, the most serious first. Empty when
+ * everything is fine.
+ */
+export function attentionItems(fleet: FleetOverview | undefined, queue: QueueView | undefined): AttentionItem[] {
+  const items: AttentionItem[] = [];
+  if (fleet?.reconciling) {
+    items.push({
+      key: 'reconciling',
+      tone: 'warn',
+      text: 'The controller restarted and is checking in with its machines; no new jobs start until it is done.',
+      to: '/machines',
+    });
+  }
+  for (const machine of fleet?.machines ?? []) {
+    const status = machineStatus(machine);
+    const to = `/machines/${machine.id}`;
+    if (status.key === 'offline' && machine.lifecycle === 'ready') {
+      items.push({
+        key: `offline/${machine.id}`,
+        tone: 'bad',
+        text:
+          machine.attempts.length > 0
+            ? `${machine.name} is offline (${status.precise.toLowerCase()}) while holding ${machine.attempts.length} ${machine.attempts.length === 1 ? 'job' : 'jobs'}.`
+            : `${machine.name} is offline (${status.precise.toLowerCase()}).`,
+        to,
+      });
+    } else if (status.key === 'stale') {
+      items.push({
+        key: `stale/${machine.id}`,
+        tone: 'warn',
+        text: `${machine.name} has stopped reporting, so it gets no new jobs.`,
+        to,
+      });
+    }
+    if (machine.flags.includes('quarantined')) {
+      items.push({
+        key: `quarantined/${machine.id}`,
+        tone: 'bad',
+        text: `${machine.name} holds capacity that could not be cleaned up; someone has to resolve it.`,
+        to,
+      });
+    }
+  }
+  for (const entry of queue?.entries ?? []) {
+    const line = queueLine(entry.job.queue_reason);
+    if (line.stuck) {
+      items.push({
+        key: `stuck/${entry.job.id}`,
+        tone: 'bad',
+        text: `${entry.job.recipe} (${entry.job.project_name}) ${line.headline.charAt(0).toLowerCase()}${line.headline.slice(1)}.`,
+        to: `/jobs/${entry.job.id}`,
+      });
+    }
+  }
+  // What only a person can fix comes first; the sort keeps the order within each tone.
+  return items.sort((a, b) => (a.tone === 'bad' ? 0 : 1) - (b.tone === 'bad' ? 0 : 1));
+}
+
+/** The longest-waiting queued job, by the time the queue was read. */
+export function longestWait(queue: QueueView): QueueView['entries'][number] | undefined {
+  let longest: QueueView['entries'][number] | undefined;
+  for (const entry of queue.entries) {
+    if (!longest || entry.waiting_ms > longest.waiting_ms) longest = entry;
+  }
+  return longest;
+}
+
+export interface Failures {
+  count: number;
+  /** The list may not reach back to `since`, so there may be more. */
+  atLeast: boolean;
+}
+
+/**
+ * Jobs that finished without succeeding since `since`, from a list of the
+ * most recently changed jobs. A finished job's last change is its finish.
+ */
+export function failuresSince(jobs: JobView[], since: number, listLimit: number): Failures {
+  const count = jobs.filter((job) => isFailure(job) && job.updated_at >= since).length;
+  const oldest = jobs.reduce((min, job) => Math.min(min, job.updated_at), Number.POSITIVE_INFINITY);
+  return { count, atLeast: jobs.length >= listLimit && oldest >= since };
+}

@@ -3,54 +3,17 @@ import type { PhaseMark } from '../api/activity';
 import { Fixtures } from '../api/schemas';
 import { rawFixtures } from '../test/fixtures';
 import { lastSeenText } from './labels';
-import {
-  LIVENESS,
-  aliveEnvironments,
-  attemptPhaseLabel,
-  attemptRows,
-  liveness,
-  livenessCounts,
-} from './overview';
+import { aliveEnvironments, attemptRows, attentionItems, failuresSince, longestWait } from './overview';
 
 const data = () => Fixtures.parse(rawFixtures());
 const NONE = new Map<string, PhaseMark>();
 
-describe('liveness', () => {
-  const machine = (name: string) => {
-    const found = data().fleet.machines.find((m) => m.name === name);
-    if (!found) throw new Error(`no fixture machine ${name}`);
-    return found;
-  };
-
-  it('tells connected, stale, unreachable and disconnected apart', () => {
-    expect(liveness(machine('builder-1'))).toBe('connected');
-    expect(liveness(machine('linux-1'))).toBe('stale');
-    expect(liveness(machine('handheld-1'))).toBe('unreachable');
-    expect(liveness({ ...machine('builder-1'), connected: false })).toBe('disconnected');
-    // A lost connection outranks a stale mark.
-    expect(liveness({ ...machine('linux-1'), connected: false })).toBe('disconnected');
-  });
-
-  it('words each state differently, with a different mark from connected', () => {
-    const labels = Object.values(LIVENESS).map((state) => state.label);
-    expect(new Set(labels).size).toBe(4);
-    expect(LIVENESS.stale.tone).not.toBe(LIVENESS.connected.tone);
-    expect(LIVENESS.unreachable.tone).not.toBe(LIVENESS.stale.tone);
-  });
-
+describe('lastSeenText', () => {
   it('says when a machine was last seen', () => {
     const { fleet } = data();
-    expect(lastSeenText(machine('linux-1'), fleet.server_time)).toBe('last seen 21s ago');
-    expect(lastSeenText({ ...machine('linux-1'), last_seen_at: null }, 0)).toBe('never seen');
-  });
-
-  it('counts every machine exactly once', () => {
-    expect(livenessCounts(data().fleet.machines)).toEqual({
-      connected: 4,
-      stale: 1,
-      unreachable: 1,
-      disconnected: 0,
-    });
+    const linux = fleet.machines.find((m) => m.name === 'linux-1')!;
+    expect(lastSeenText(linux, fleet.server_time)).toBe('last seen 21s ago');
+    expect(lastSeenText({ ...linux, last_seen_at: null }, 0)).toBe('never seen');
   });
 });
 
@@ -77,10 +40,10 @@ describe('attemptRows', () => {
     const { fleet, jobs } = data();
     const offered = () =>
       attemptRows(fleet, jobs, NONE).launching.find((r) => r.attempt.phase === 'offered')!;
-    expect(attemptPhaseLabel(offered())).toBe('Offered');
+    expect(offered().accepted).toBe(false);
     const id = offered().attempt.attempt_id;
     jobs.flatMap((j) => j.attempts).find((a) => a.id === id)!.start_committed = true;
-    expect(attemptPhaseLabel(offered())).toBe('Accepted, starting');
+    expect(offered().accepted).toBe(true);
   });
 
   it('times a phase from its event, and says when it only has the offer time', () => {
@@ -121,5 +84,38 @@ describe('aliveEnvironments', () => {
     expect(new Set(alive.map((e) => e.state))).toEqual(
       new Set(['ready', 'starting', 'finishing', 'quarantined']),
     );
+  });
+});
+
+describe('attentionItems', () => {
+  it('names machines out of contact, stuck capacity and jobs that cannot run', () => {
+    const { fleet, queue } = data();
+    const items = attentionItems(fleet, queue);
+    expect(items.map((item) => item.key.split('/')[0])).toEqual(['quarantined', 'offline', 'stuck', 'stale']);
+    expect(items.every((item) => item.to.startsWith('/machines/') || item.to.startsWith('/jobs/'))).toBe(true);
+  });
+
+  it('is empty when nothing needs a person, and mentions a reconciling controller', () => {
+    const { fleet, queue } = data();
+    expect(attentionItems({ ...fleet, machines: [] }, { ...queue, entries: [] })).toEqual([]);
+    expect(attentionItems({ ...fleet, machines: [], reconciling: true }, undefined)[0]!.key).toBe('reconciling');
+    expect(attentionItems(undefined, undefined)).toEqual([]);
+  });
+});
+
+describe('headline numbers', () => {
+  it('finds the longest wait', () => {
+    expect(longestWait(data().queue)!.job.recipe).toBe('lint');
+    expect(longestWait({ entries: [], shares: [] })).toBeUndefined();
+  });
+
+  it('counts failures since a time, and says when the list may not reach back far enough', () => {
+    const { jobs, fleet } = data();
+    const hourAgo = fleet.server_time - 3_600_000;
+    expect(failuresSince(jobs, hourAgo, 200)).toEqual({ count: 1, atLeast: false });
+    expect(failuresSince(jobs, 0, 200).count).toBe(3);
+    // A full list whose oldest entry is still inside the window may miss some.
+    const recent = jobs.map((job) => ({ ...job, updated_at: fleet.server_time }));
+    expect(failuresSince(recent, hourAgo, recent.length).atLeast).toBe(true);
   });
 });

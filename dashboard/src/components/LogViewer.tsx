@@ -187,7 +187,7 @@ export function LogViewer({
           />
           <label htmlFor="log-follow">Follow new output</label>
         </div>
-        <button type="button" className="btn" onClick={() => void load('tail')} disabled={state.loading}>
+        <button type="button" className="btn btn-small" onClick={() => void load('tail')} disabled={state.loading}>
           Jump to the end
         </button>
       </div>
@@ -225,6 +225,7 @@ export function LogViewer({
 
       {state.error ? <ErrorPanel error={state.error} onRetry={() => void load('next')} /> : null}
 
+      <div className="log-foot">
       <p className="log-status" role="status">
         {state.loading
           ? 'Loading…'
@@ -237,10 +238,11 @@ export function LogViewer({
                 : 'More output may be available.'}
       </p>
       {!state.complete && !follow ? (
-        <button type="button" className="btn" onClick={() => void load('next')} disabled={state.loading}>
+        <button type="button" className="btn btn-small" onClick={() => void load('next')} disabled={state.loading}>
           Load the next page
         </button>
       ) : null}
+      </div>
     </div>
   );
 }

@@ -213,7 +213,7 @@ export const leaseLimitLabel = (limit: string) => lookup(LEASE_LIMITS, limit);
 const REASONS: Record<string, string> = {
   schedulable: 'Ready to start',
   waiting_for_capacity: 'Waiting for capacity',
-  no_compatible_machine: 'No machine can run this',
+  no_compatible_machine: 'No compatible machine',
   wrong_platform: 'Wrong platform',
   missing_capability: 'Missing tool or SDK',
   machine_too_small: 'Machine too small',
