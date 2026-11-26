@@ -747,7 +747,7 @@ mod tests {
         assert!(
             evaluate(
                 &policy,
-                &[calm.clone()],
+                std::slice::from_ref(&calm),
                 &[],
                 &LaunchHistory::default(),
                 NOW
