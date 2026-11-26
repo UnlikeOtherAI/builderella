@@ -3,7 +3,7 @@
 mod common;
 
 use bella_core::machine::{LocalControl, MachinePolicy, MachineProfile};
-use bella_core::protocol::{LocalAttemptState, RejectCode, StepState};
+use bella_core::protocol::{AttemptEvent, LocalAttemptState, RejectCode, StepState};
 use bella_core::{Clock, MachineId, UnixMillis};
 use bella_journal::{Enrollment, Journal, JournalError, RESERVE_BYTES, SCHEMA_VERSION};
 use common::*;
@@ -171,6 +171,150 @@ fn enrollment_is_set_once() {
         Err(JournalError::AlreadyEnrolled)
     ));
     assert_eq!(journal.enrollment().unwrap(), Some(enrollment()));
+}
+
+#[test]
+fn the_controller_endpoint_can_move_without_enrolling_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("journal.db");
+    let clock = clock();
+    let new_url = "https://controller.example.net:9443";
+    let new_fingerprint = "ab".repeat(32);
+    let moved = Enrollment {
+        controller_url: new_url.to_owned(),
+        fingerprint: new_fingerprint.clone(),
+        ..enrollment()
+    };
+    let control = LocalControl {
+        paused: true,
+        draining: false,
+        boost_until: None,
+    };
+    let held = offer(1);
+    let running = offer(2);
+
+    let (attempts, reports, events) = {
+        let journal = open(&path, &clock);
+        journal.recover(&boot(1)).unwrap();
+        assert!(matches!(
+            journal.set_controller_endpoint(new_url, &new_fingerprint),
+            Err(JournalError::NotEnrolled)
+        ));
+        assert_eq!(journal.enrollment().unwrap(), None);
+
+        assert!(journal.set_enrollment(&enrollment()).unwrap());
+        let mut policy = enrollment().policy;
+        policy.revision += 1;
+        assert!(journal.set_policy(&policy).unwrap());
+        journal.set_local_control(control).unwrap();
+        assert_eq!(journal.next_connection_generation().unwrap(), 1);
+        journal.observe_epoch(7).unwrap();
+        journal.hold_offer(&held).unwrap();
+        let attempt = run(&journal, &running, authority(T0));
+        journal
+            .set_step_state(&attempt.attempt_id, "build", StepState::Succeeded, Some(0))
+            .unwrap();
+        journal
+            .append_event(&attempt, AttemptEvent::Preparing)
+            .unwrap();
+        let before = (
+            journal.attempts().unwrap(),
+            journal.reports().unwrap(),
+            journal.unacked_events(&attempt.attempt_id).unwrap(),
+        );
+        assert_eq!(before.2.len(), 1);
+
+        // The address alone, then the certificate alone: each is a change.
+        assert!(
+            journal
+                .set_controller_endpoint(new_url, &enrollment().fingerprint)
+                .unwrap()
+        );
+        assert!(
+            journal
+                .set_controller_endpoint(new_url, &new_fingerprint)
+                .unwrap()
+        );
+        assert!(
+            !journal
+                .set_controller_endpoint(new_url, &new_fingerprint)
+                .unwrap(),
+            "the same endpoint again changes nothing"
+        );
+        assert_eq!(
+            journal.enrollment().unwrap(),
+            Some(Enrollment {
+                policy: policy.clone(),
+                ..moved.clone()
+            })
+        );
+        // Enrollment stays a one-time record: the new endpoint is the
+        // stored identity, the old one no longer is, and neither call
+        // touches the policy.
+        assert!(!journal.set_enrollment(&moved).unwrap());
+        assert!(matches!(
+            journal.set_enrollment(&enrollment()),
+            Err(JournalError::AlreadyEnrolled)
+        ));
+        assert_eq!(journal.policy().unwrap(), Some(policy));
+
+        assert_eq!(
+            (
+                journal.attempts().unwrap(),
+                journal.reports().unwrap(),
+                journal.unacked_events(&attempt.attempt_id).unwrap(),
+            ),
+            before
+        );
+        before
+    };
+
+    // After a restart the worker reads the new endpoint and nothing else
+    // has moved.
+    let journal = open(&path, &clock);
+    let stored = journal.enrollment().unwrap().unwrap();
+    assert_eq!(stored.controller_url, new_url);
+    assert_eq!(stored.fingerprint, new_fingerprint);
+    assert_eq!(stored.fleet_id, enrollment().fleet_id);
+    assert_eq!(stored.machine_id, enrollment().machine_id);
+    assert_eq!(stored.policy.revision, enrollment().policy.revision + 1);
+    assert_eq!(journal.local_control().unwrap(), control);
+    assert_eq!(journal.connection_generation().unwrap(), 1);
+    assert_eq!(journal.known_epoch().unwrap(), 7);
+    assert_eq!(journal.attempts().unwrap(), attempts);
+    assert_eq!(journal.attempts().unwrap().len(), 2);
+    assert_eq!(journal.reports().unwrap(), reports);
+    assert_eq!(
+        journal
+            .unacked_events(&attempts[1].offer.attempt.attempt_id)
+            .unwrap(),
+        events
+    );
+    assert_eq!(
+        journal.held_resources().unwrap(),
+        reservation().saturating_add(&reservation())
+    );
+}
+
+/// An endpoint change shares a transaction with whatever else the caller
+/// records, and is undone with it.
+#[test]
+fn an_endpoint_change_rolls_back_with_its_transaction() {
+    let clock = clock();
+    let journal = memory(&clock);
+    journal.set_enrollment(&enrollment()).unwrap();
+    let failed: Result<(), JournalError> = journal.with_transaction(|tx| {
+        assert!(tx.set_controller_endpoint("https://other.example:1", "cd")?);
+        assert_eq!(
+            tx.enrollment()?.map(|e| e.controller_url),
+            Some("https://other.example:1".to_owned())
+        );
+        tx.observe_epoch(3)?;
+        Err(JournalError::NotEnrolled)
+    });
+    assert!(failed.is_err());
+    assert_eq!(journal.enrollment().unwrap(), Some(enrollment()));
+    assert_eq!(journal.known_epoch().unwrap(), 0);
 }
 
 #[test]
