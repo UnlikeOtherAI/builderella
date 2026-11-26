@@ -948,6 +948,9 @@ table.compact tbody th {
   color: var(--text);
   font-size: inherit;
 }
+table.compact tbody tr:last-child th {
+  border-bottom: 0;
+}
 table.compact .chip {
   font-size: 0.75rem;
 }

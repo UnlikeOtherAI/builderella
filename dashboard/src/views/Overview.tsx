@@ -615,6 +615,8 @@ interface Names {
   recipe: (jobId: string) => string | undefined;
 }
 
+const capitalized = (word: string) => word.charAt(0).toUpperCase() + word.slice(1);
+
 function Subject({ event, names }: { event: EventRecord; names: Names }) {
   if (event.job_id) return <JobLink id={event.job_id} recipe={names.recipe(event.job_id)} />;
   switch (event.entity) {
@@ -627,7 +629,7 @@ function Subject({ event, names }: { event: EventRecord; names: Names }) {
         </Link>
       );
     default:
-      return <span className="muted">{event.entity}</span>;
+      return <span className="muted">{capitalized(event.entity)}</span>;
   }
 }
 
