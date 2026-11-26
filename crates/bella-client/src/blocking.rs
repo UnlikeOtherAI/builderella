@@ -195,6 +195,7 @@ macro_rules! blocking_calls {
 
 blocking_calls! {
     fn health(&self) -> ();
+    fn version(&self) -> serde_json::Value;
     fn whoami(&self) -> WhoAmI;
     fn create_token(&self, request: &CreateTokenRequest) -> TokenResponse;
     fn create_pairing_code(&self, request: &CreatePairingCodeRequest) -> PairingCodeResponse;

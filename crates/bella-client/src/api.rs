@@ -35,6 +35,14 @@ impl Client {
         self.fetch(&call).await.map(|_| ())
     }
 
+    /// `GET /version`: the controller's version and protocol version, as
+    /// the JSON object the controller sends (`version`, `protocol_version`,
+    /// `api_prefix`). Needs any valid token.
+    pub async fn version(&self) -> Result<serde_json::Value, ClientError> {
+        self.json(&Call::new(Method::GET, self.endpoint(&["version"])?))
+            .await
+    }
+
     /// `GET /whoami`: the principal behind this client's token.
     pub async fn whoami(&self) -> Result<WhoAmI, ClientError> {
         self.json(&Call::new(Method::GET, self.endpoint(&["whoami"])?))
