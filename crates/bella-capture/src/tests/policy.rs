@@ -19,7 +19,9 @@ fn a33_untracked_secret_is_excluded_and_reported() {
     repo.write("config/.env.local", b"TOKEN=2");
     repo.write("keys/server.pem", b"-----BEGIN PRIVATE KEY-----");
     repo.write("deploy/id_rsa", b"key");
-    repo.write("deploy/ID_ED25519.pub", b"upper case still matches");
+    repo.write("deploy/ID_ED25519", b"upper case still matches");
+    repo.write("deploy/id_rsa.pub", b"public half");
+    repo.write(".env.example", b"TOKEN=");
     repo.write("ok.txt", b"fine");
     repo.write("environment.md", b"not a secret name");
 
@@ -30,14 +32,25 @@ fn a33_untracked_secret_is_excluded_and_reported() {
         [
             ".env",
             "config/.env.local",
-            "deploy/ID_ED25519.pub",
+            "deploy/ID_ED25519",
             "deploy/id_rsa",
             "keys/server.pem",
         ]
     );
-    assert_eq!(paths(&result), ["environment.md", "ok.txt", "src/main.rs"]);
+    // Templates and public keys match a secret pattern but are allowed by
+    // default.
+    assert_eq!(
+        paths(&result),
+        [
+            ".env.example",
+            "deploy/id_rsa.pub",
+            "environment.md",
+            "ok.txt",
+            "src/main.rs"
+        ]
+    );
     // No secret byte reached the store.
-    assert_eq!(store.len(), 3);
+    assert_eq!(store.len(), 5);
 
     // Explicitly allowed paths are captured and no longer reported.
     let policy = with(|p| p.allow_secrets = vec![".env".into(), "keys".into()]);
@@ -49,11 +62,7 @@ fn a33_untracked_secret_is_excluded_and_reported() {
     );
     assert_eq!(
         allowed.excluded_secrets,
-        [
-            "config/.env.local",
-            "deploy/ID_ED25519.pub",
-            "deploy/id_rsa"
-        ]
+        ["config/.env.local", "deploy/ID_ED25519", "deploy/id_rsa"]
     );
 }
 

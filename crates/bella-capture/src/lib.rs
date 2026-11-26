@@ -141,6 +141,16 @@ impl CapturePolicy {
         "*.pfx",
         "credentials.json",
     ];
+
+    /// Names that match a secret pattern but are, by convention, safe to
+    /// capture: checked-in templates and public halves of key pairs.
+    pub const DEFAULT_ALLOW_SECRETS: [&'static str; 5] = [
+        ".env.example",
+        ".env.sample",
+        ".env.template",
+        ".env.dist",
+        "*.pub",
+    ];
 }
 
 impl Default for CapturePolicy {
@@ -153,7 +163,10 @@ impl Default for CapturePolicy {
                 .iter()
                 .map(|p| p.to_string())
                 .collect(),
-            allow_secrets: Vec::new(),
+            allow_secrets: Self::DEFAULT_ALLOW_SECRETS
+                .iter()
+                .map(|p| p.to_string())
+                .collect(),
             max_file_bytes: MAX_OBJECT_BYTES,
             max_total_bytes: 16 * GIB,
             required_consistency: Consistency::BestEffort,
