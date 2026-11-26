@@ -49,7 +49,7 @@ pub(crate) fn parse_hex(input: &str) -> Result<[u8; LEN], HexDigestError> {
         });
     }
     let mut out = [0u8; LEN];
-    for (index, pair) in bytes.chunks_exact(2).enumerate() {
+    for (index, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
         let high = lower_hex_value(pair[0]).ok_or(HexDigestError::InvalidCharacter {
             position: index * 2 + 1,
         })?;

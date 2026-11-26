@@ -503,7 +503,7 @@ mod tests {
         );
     }
 
-    fn env_of(pairs: &[(&str, &Path)]) -> impl Fn(&str) -> Option<OsString> {
+    fn env_of(pairs: &[(&str, &Path)]) -> impl Fn(&str) -> Option<OsString> + use<> {
         let map: HashMap<String, OsString> = pairs
             .iter()
             .map(|(key, value)| ((*key).to_owned(), value.as_os_str().to_owned()))
