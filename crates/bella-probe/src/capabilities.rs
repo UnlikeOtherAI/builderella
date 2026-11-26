@@ -1010,7 +1010,18 @@ mod tests {
     use std::time::{Duration, Instant};
 
     /// A directory with one fake tool that runs `body` as a shell script.
+    ///
+    /// The timeout is generous: the first run of a freshly written script
+    /// can take over a second on a busy or older machine.
     fn fake_tool(name: &str, body: &str) -> (tempfile::TempDir, Context) {
+        fake_tool_with_timeout(name, body, Duration::from_secs(20))
+    }
+
+    fn fake_tool_with_timeout(
+        name: &str,
+        body: &str,
+        timeout: Duration,
+    ) -> (tempfile::TempDir, Context) {
         let dir = tempfile::tempdir().unwrap();
         if cfg!(windows) {
             let script = format!("@echo off\r\n{body}\r\n");
@@ -1024,7 +1035,7 @@ mod tests {
                 std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
             }
         }
-        let runner = Runner::with_dirs(Duration::from_millis(1500), vec![dir.path().to_path_buf()]);
+        let runner = Runner::with_dirs(timeout, vec![dir.path().to_path_buf()]);
         (dir, Context::new(runner))
     }
 
@@ -1079,7 +1090,7 @@ mod tests {
         } else {
             "sleep 60"
         };
-        let (_dir, context) = fake_tool("faketool", hang);
+        let (_dir, context) = fake_tool_with_timeout("faketool", hang, Duration::from_millis(1500));
         let started = Instant::now();
         let found = probe(&context);
         assert!(
