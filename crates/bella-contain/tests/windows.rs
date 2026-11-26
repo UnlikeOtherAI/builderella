@@ -88,6 +88,22 @@ impl Drop for Guard {
     }
 }
 
+/// The same safety net for a scope held through the trait object.
+struct BoxGuard(Option<Box<dyn Scope>>);
+
+impl Drop for BoxGuard {
+    fn drop(&mut self) {
+        if let Some(mut scope) = self.0.take() {
+            let _ = scope.kill();
+            let started = Instant::now();
+            while scope.members().ok() != Some(Membership::Empty) && started.elapsed() < WAIT {
+                sleep(Duration::from_millis(20));
+            }
+            let _ = scope.destroy();
+        }
+    }
+}
+
 /// Kills a process started outside any scope when the test ends.
 struct Bystander(std::process::Child);
 
@@ -569,6 +585,27 @@ fn memory_limit_stops_an_allocator_and_is_reported() {
     assert_eq!(free.limit_events().unwrap().memory_limit_hits, 0);
 }
 
+/// A restarted worker sees limit hits on the scope it adopted.
+#[test]
+fn limit_events_follow_the_adopting_handle() {
+    let adapter = adapter();
+    let limits = Limits {
+        memory_bytes: Some(256 << 20),
+        ..Limits::default()
+    };
+    let mut first = Guard::new("events-adopt", &limits);
+    let _sleeper = spawn_ready(&mut first, "sleep", &["60"]);
+    let identity = first.identity();
+    drop(first.release());
+
+    let adopted = adapter.adopt_job(&identity).unwrap();
+    let mut adopted = Guard(Some(adopted.expect("a live job")));
+    let output = run(&mut adopted, &helper("alloc", &["1024"]));
+    assert_eq!(output.exit.code, Some(REFUSED), "{}", output.stdout);
+    let events = adopted.limit_events().unwrap();
+    assert!(events.memory_limit_hits >= 1, "{events:?}");
+}
+
 #[test]
 fn process_limit_blocks_extra_roots() {
     const LIMIT: u32 = 4;
@@ -921,10 +958,12 @@ fn native_adapter_runs_and_stops_a_process_through_the_traits() {
     assert_eq!(detected.process_tree, Enforcement::Hard);
     assert_eq!(detected.disk, Enforcement::None);
 
-    let mut scope = adapter
+    let scope = adapter
         .create(&unique("native"), &Limits::default())
         .unwrap();
     let identity = scope.identity();
+    let mut guard = BoxGuard(Some(scope));
+    let scope = guard.0.as_mut().unwrap();
     let Spawned { mut child, .. } = scope.spawn(&helper("sleep", &["60"])).unwrap();
     assert!(matches!(scope.members().unwrap(), Membership::Alive(_)));
     let membership = stop_scope(
@@ -935,7 +974,8 @@ fn native_adapter_runs_and_stops_a_process_through_the_traits() {
     .unwrap();
     assert_eq!(membership, Membership::Empty);
     assert!(child.wait().unwrap().code.is_some());
-    scope.destroy().unwrap();
+    let evidence = guard.0.take().unwrap().destroy().unwrap();
+    assert!(evidence.contains("ActiveProcesses=0"), "{evidence}");
     assert!(adapter.adopt(&identity).unwrap().is_none());
 }
 

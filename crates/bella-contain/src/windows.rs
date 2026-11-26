@@ -1325,7 +1325,7 @@ struct Root {
     pid: u32,
     /// Keeps the process object alive so that `pid`, which is also the id of
     /// the process group, cannot be reused while the scope exists.
-    _process: Arc<OwnedHandle>,
+    process: Arc<OwnedHandle>,
 }
 
 /// A containment scope backed by one named job object.
@@ -1419,9 +1419,9 @@ impl JobScope {
     /// Generates `CTRL_BREAK_EVENT` for the scope's process groups.
     ///
     /// Each root has its own console, so this process attaches to every
-    /// member console in turn, generates the event for the groups it knows
-    /// (the roots it started, and every live member in case it leads a
-    /// group), and detaches again. Events are always addressed to a group,
+    /// member console in turn, generates the event for the groups that can
+    /// be on it (every live member in case it leads a group, and the roots
+    /// that exited and may have left descendants), and detaches again. Events are always addressed to a group,
     /// never to a whole console, so only processes of this scope receive
     /// them. See the module documentation for when nothing is sent.
     pub fn send_ctrl_break(&mut self) -> Result<CtrlBreakReport, ContainError> {
@@ -1448,6 +1448,13 @@ impl JobScope {
         }
 
         let me = std::process::id();
+        let exited_roots: Vec<u32> = self
+            .roots
+            .iter()
+            // SAFETY: the root's process handle is open.
+            .filter(|root| unsafe { WaitForSingleObject(raw(&root.process), 0) } == WAIT_OBJECT_0)
+            .map(|root| root.pid)
+            .collect();
         let mut visited = BTreeSet::new();
         for pid in &members {
             if !visited.insert(*pid) {
@@ -1470,7 +1477,9 @@ impl JobScope {
                 .collect();
 
             let attached = console_processes();
-            let mut groups: BTreeSet<u32> = self.roots.iter().map(|root| root.pid).collect();
+            // A live root shows up in `attached`; a root that exited may
+            // still have its group on any console.
+            let mut groups: BTreeSet<u32> = exited_roots.iter().copied().collect();
             for other in attached.iter().filter(|other| **other != me) {
                 visited.insert(*other);
                 if members.contains(other) {
@@ -1609,7 +1618,7 @@ impl Scope for JobScope {
 
         self.roots.push(Root {
             pid: info.dwProcessId,
-            _process: Arc::clone(&process),
+            process: Arc::clone(&process),
         });
         Ok(Spawned {
             child: Box::new(JobChild {
@@ -1647,6 +1656,8 @@ impl Scope for JobScope {
         })
     }
 
+    /// A process stops counting when its exit begins. Its handles, and with
+    /// them locks on files in the workspace, are released a moment later.
     fn members(&self) -> Result<Membership, ContainError> {
         self.drain_notifications()?;
         Ok(match accounting(self.handle())?.ActiveProcesses {
@@ -1887,9 +1898,9 @@ impl JobObjects {
 
     /// [`Containment::adopt`] with the concrete scope type.
     ///
-    /// The adopting process takes over the job's notifications when Windows
-    /// lets it replace the earlier completion port; hits that happened while
-    /// no worker was running are not recovered.
+    /// The adopting handle takes over the job's notifications, so an earlier
+    /// handle to the same scope stops receiving them. Hits that happened
+    /// while no worker was running are not recovered.
     pub fn adopt_job(&self, identity: &ScopeIdentity) -> Result<Option<JobScope>, ContainError> {
         if identity.kind != ScopeKind::WindowsJob {
             return Err(ContainError::Other(format!(
