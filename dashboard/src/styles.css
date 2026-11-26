@@ -563,17 +563,46 @@ dialog.dialog h2 {
 .field-check .hint {
   grid-column: 2;
 }
-.field-check input {
-  width: 18px;
-  height: 18px;
-}
 .hint {
   color: var(--muted);
   font-size: 0.8125rem;
   margin: 0;
 }
+/* Drawn here rather than by the platform, so a ticked box looks the same in
+   both themes and in every browser. */
 input[type='checkbox'] {
-  accent-color: var(--accent);
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  display: inline-grid;
+  place-content: center;
+  border: 2px solid var(--muted);
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: pointer;
+}
+input[type='checkbox']::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  transform: scale(0);
+  background: var(--accent-contrast);
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0, 43% 62%);
+}
+input[type='checkbox']:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+input[type='checkbox']:checked::before {
+  transform: scale(1);
+}
+input[type='checkbox']:disabled,
+fieldset:disabled input[type='checkbox'] {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 select {
   appearance: none;
