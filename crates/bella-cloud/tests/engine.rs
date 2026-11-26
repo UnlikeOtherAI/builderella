@@ -672,6 +672,7 @@ fn hold_accrued_estimate_and_reported_actual_are_three_separate_numbers() {
     assert_eq!(engine.money(&id).unwrap().accrued.micros, 104_500);
 
     // There is nothing to report an actual against without a hold.
+    world.sim.tick();
     let unauthorized = engine.request_capacity(&world.request()).unwrap();
     assert!(matches!(
         engine.record_actual(&unauthorized.id, 1, true),
