@@ -1497,8 +1497,10 @@ mod sys {
     const IOPOL_UTILITY: libc::c_int = 4;
     const SZOMB: u32 = 5;
 
+    // SAFETY: the declaration matches `setiopolicy_np` in macOS's
+    // `<sys/resource.h>`: three `int` arguments, `int` result.
     unsafe extern "C" {
-        /// `<sys/resource.h>`; not exposed by the `libc` crate.
+        /// Not exposed by the `libc` crate.
         fn setiopolicy_np(
             iotype: libc::c_int,
             scope: libc::c_int,
